@@ -104,6 +104,7 @@ export interface SiteDiary {
   linkedRamsRef?: string;
 
   // Section 2 — Labour
+  newInductees?: number;
   workers: LabourEntry[];
   subcontractors: SubcontractorEntry[];
   visitors: VisitorEntry[];

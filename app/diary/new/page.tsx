@@ -28,13 +28,14 @@ const WEATHER_CONDITIONS = [
 ];
 
 const inputCls =
-  "mt-1 w-full rounded-md border border-blue-900/20 bg-[#241b15] px-3 py-2 text-[#F5EFE6] focus:border-blue-700/40 focus:outline-none";
+  "mt-1 w-full rounded-md border border-blue-900/20 bg-[#241b15] px-3 py-2 text-[#F5EFE6] focus:border-blue-700/40 focus:outline-none focus:ring-1 focus:ring-blue-500/40";
 const inlineCls =
-  "rounded-md border border-blue-900/20 bg-[#241b15] px-3 py-2 text-[#F5EFE6] focus:border-blue-700/40 focus:outline-none";
+  "rounded-md border border-blue-900/20 bg-[#241b15] px-3 py-2 text-[#F5EFE6] focus:border-blue-700/40 focus:outline-none focus:ring-1 focus:ring-blue-500/40";
 const addBtn =
   "rounded-full bg-[#2563eb] px-3 py-1 text-sm font-medium text-white transition hover:bg-[#1d4ed8]";
+const labelCls = "block text-sm font-medium text-[#F5EFE6]/60";
 const sectionHeading =
-  "mb-6 text-2xl font-semibold text-[#F5EFE6] border-b-2 border-[#2563eb] pb-2";
+  "mb-6 border-l-[3px] border-[#2563eb] pl-3 text-2xl font-semibold text-[#F5EFE6]";
 
 function TrashBtn({ onClick }: { onClick: () => void }) {
   return (
@@ -72,7 +73,7 @@ type PlantDeliveryRow = { id: string; item: string; date: string; notes?: string
 type IncidentRow = { id: string; type: "incident" | "near-miss" | "accident"; description: string; injured?: string; actionTaken?: string };
 type ToolboxRow = { id: string; topic: string; remarks?: string; showRemarks?: boolean };
 type PhotoRow = PhotoEntry & { uploading?: boolean };
-type RamsDoc = { id: string; documentRef: string; projectName: string };
+type RamsDoc = { id: string; documentRef: string; projectName: string; siteAddress?: string; preparedBy?: string };
 type PreviousDiary = { id: string; date: string; projectName: string; plantOnSite: PlantOnSiteRow[] };
 
 function getCanvasPos(canvas: HTMLCanvasElement, e: React.MouseEvent | React.TouchEvent) {
@@ -113,6 +114,7 @@ export default function NewDiaryPage() {
   const [weatherRemarks, setWeatherRemarks] = useState("");
 
   // Labour & Personnel
+  const [newInductees, setNewInductees] = useState(0);
   const [workers, setWorkers] = useState<WorkerRow[]>([]);
   const [subcontractors, setSubcontractors] = useState<WorkerRow[]>([]);
   const [visitors, setVisitors] = useState<VisitorRow[]>([]);
@@ -208,6 +210,8 @@ export default function NewDiaryPage() {
             id: d.id,
             documentRef: (d.data().documentRef as string) || "",
             projectName: (d.data().projectName as string) || "",
+            siteAddress: (d.data().siteAddress as string) || "",
+            preparedBy: (d.data().preparedBy as string) || "",
           })),
         );
       })
@@ -370,6 +374,7 @@ export default function NewDiaryPage() {
     linkedRamsId: linkedRamsId || undefined,
     linkedRamsTitle: linkedRamsTitle || undefined,
     linkedRamsRef: linkedRamsRef || undefined,
+    newInductees,
     workers,
     subcontractors,
     visitors,
@@ -466,55 +471,15 @@ export default function NewDiaryPage() {
           {/* ── Basic Info ─────────────────────────────────── */}
           <section>
             <h2 className={sectionHeading}>Basic Info</h2>
-            <div className="grid gap-4 sm:grid-cols-2">
+            <div className="grid gap-6 sm:grid-cols-2">
 
-              <div>
-                <label className="block text-sm font-medium text-[rgb(245,239,230/.6)]">Project Name</label>
-                <input type="text" value={projectName} onChange={(e) => setProjectName(e.target.value)} className={inputCls} />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-[rgb(245,239,230/.6)]">Site Address</label>
-                <input type="text" value={siteAddress} onChange={(e) => setSiteAddress(e.target.value)} className={inputCls} />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-[rgb(245,239,230/.6)]">Date</label>
-                <input type="date" value={date} onChange={(e) => setDate(e.target.value)} className={inputCls} />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-[rgb(245,239,230/.6)]">Shift Type</label>
-                <select value={shiftType} onChange={(e) => setShiftType(e.target.value)} className={inputCls}>
-                  {SHIFT_TYPES.map((s) => <option key={s} value={s}>{s}</option>)}
-                </select>
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-[rgb(245,239,230/.6)]">Site Manager</label>
-                <input type="text" value={siteManager} onChange={(e) => setSiteManager(e.target.value)} className={inputCls} />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-[rgb(245,239,230/.6)]">Weather Condition</label>
-                <select value={weatherCondition} onChange={(e) => setWeatherCondition(e.target.value)} className={inputCls}>
-                  <option value="">Select condition</option>
-                  {WEATHER_CONDITIONS.map((c) => <option key={c} value={c}>{c}</option>)}
-                </select>
-              </div>
+              {/* Linked RAMS Document — top of form */}
               <div className="sm:col-span-2">
-                <label className="block text-sm font-medium text-[rgb(245,239,230/.6)]">Additional Weather Remarks</label>
-                <input
-                  type="text"
-                  value={weatherRemarks}
-                  onChange={(e) => setWeatherRemarks(e.target.value)}
-                  placeholder="e.g. Temp 12°C, Wind 25mph, Heavy rain until 10am"
-                  className={inputCls}
-                />
-              </div>
-
-              {/* Linked RAMS Document */}
-              <div className="sm:col-span-2">
-                <label className="block text-sm font-medium text-[rgb(245,239,230/.6)]">Linked RAMS Document</label>
+                <label className={labelCls}>Linked RAMS Document</label>
                 {linkedRamsId ? (
                   <div className="mt-1 flex items-center gap-3">
                     <span className="inline-flex items-center rounded-full bg-blue-900/40 px-3 py-1 text-sm font-medium text-blue-200">
-                      RAMS: {linkedRamsRef}
+                      Linked: {linkedRamsRef}
                     </span>
                     <span className="text-sm text-[rgb(245,239,230/.6)]">{linkedRamsTitle}</span>
                     <button
@@ -554,7 +519,16 @@ export default function NewDiaryPage() {
                             <li key={d.id}>
                               <button
                                 type="button"
-                                onMouseDown={() => { setLinkedRamsId(d.id); setLinkedRamsRef(d.documentRef); setLinkedRamsTitle(d.projectName); setRamsQuery(""); setRamsOpen(false); }}
+                                onMouseDown={() => {
+                                  setLinkedRamsId(d.id);
+                                  setLinkedRamsRef(d.documentRef);
+                                  setLinkedRamsTitle(d.projectName);
+                                  if (d.projectName) setProjectName(d.projectName);
+                                  if (d.siteAddress) setSiteAddress(d.siteAddress);
+                                  if (d.preparedBy) setSiteManager(d.preparedBy);
+                                  setRamsQuery("");
+                                  setRamsOpen(false);
+                                }}
                                 className="w-full px-4 py-2 text-left text-sm text-[#F5EFE6] hover:bg-[#241b15]"
                               >
                                 <span className="font-medium">{d.documentRef}</span>
@@ -571,6 +545,46 @@ export default function NewDiaryPage() {
                 )}
               </div>
 
+              <div>
+                <label className={labelCls}>Project Name</label>
+                <input type="text" value={projectName} onChange={(e) => setProjectName(e.target.value)} placeholder="e.g. New Office Block — Phase 2" className={inputCls} />
+              </div>
+              <div>
+                <label className={labelCls}>Site Address</label>
+                <input type="text" value={siteAddress} onChange={(e) => setSiteAddress(e.target.value)} placeholder="e.g. 14 High Street, Manchester" className={inputCls} />
+              </div>
+              <div>
+                <label className={labelCls}>Date</label>
+                <input type="date" value={date} onChange={(e) => setDate(e.target.value)} className={inputCls} />
+              </div>
+              <div>
+                <label className={labelCls}>Shift Type</label>
+                <select value={shiftType} onChange={(e) => setShiftType(e.target.value)} className={inputCls}>
+                  {SHIFT_TYPES.map((s) => <option key={s} value={s}>{s}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className={labelCls}>Site Manager</label>
+                <input type="text" value={siteManager} onChange={(e) => setSiteManager(e.target.value)} placeholder="e.g. John Smith" className={inputCls} />
+              </div>
+              <div>
+                <label className={labelCls}>Weather Condition</label>
+                <select value={weatherCondition} onChange={(e) => setWeatherCondition(e.target.value)} className={inputCls}>
+                  <option value="">Select condition</option>
+                  {WEATHER_CONDITIONS.map((c) => <option key={c} value={c}>{c}</option>)}
+                </select>
+              </div>
+              <div className="sm:col-span-2">
+                <label className={labelCls}>Additional Weather Remarks</label>
+                <input
+                  type="text"
+                  value={weatherRemarks}
+                  onChange={(e) => setWeatherRemarks(e.target.value)}
+                  placeholder="e.g. Temp 12°C, Wind 25mph, Heavy rain until 10am"
+                  className={inputCls}
+                />
+              </div>
+
             </div>
           </section>
 
@@ -578,6 +592,18 @@ export default function NewDiaryPage() {
           <section>
             <h2 className={sectionHeading}>Labour & Personnel</h2>
             <div className="space-y-6">
+
+              {/* New Inductees */}
+              <div className="flex items-center gap-4">
+                <label className={`${labelCls} whitespace-nowrap`}>New Inductees Today</label>
+                <input
+                  type="number"
+                  min={0}
+                  value={newInductees}
+                  onChange={(e) => setNewInductees(parseInt(e.target.value) || 0)}
+                  className="w-24 rounded-md border border-blue-900/20 bg-[#241b15] px-3 py-2 text-[#F5EFE6] focus:border-blue-700/40 focus:outline-none focus:ring-1 focus:ring-blue-500/40"
+                />
+              </div>
 
               {/* Workers */}
               <div>
@@ -921,26 +947,26 @@ export default function NewDiaryPage() {
             <h2 className={sectionHeading}>Sign-off</h2>
             <div className="grid gap-4 sm:grid-cols-2">
               <div>
-                <label className="block text-sm font-medium text-[rgb(245,239,230/.6)]">Completed By</label>
+                <label className={labelCls}>Completed By</label>
                 <input type="text" value={signoffCompletedBy} onChange={(e) => setSignoffCompletedBy(e.target.value)} className={inputCls} />
               </div>
               <div>
-                <label className="block text-sm font-medium text-[rgb(245,239,230/.6)]">Job Title</label>
+                <label className={labelCls}>Job Title</label>
                 <input type="text" value={signoffTitle} onChange={(e) => setSignoffTitle(e.target.value)} className={inputCls} />
               </div>
               <div>
-                <label className="block text-sm font-medium text-[rgb(245,239,230/.6)]">Company</label>
+                <label className={labelCls}>Company</label>
                 <input type="text" value={signoffCompany} onChange={(e) => setSignoffCompany(e.target.value)} className={inputCls} />
               </div>
               <div>
-                <label className="block text-sm font-medium text-[rgb(245,239,230/.6)]">Date</label>
+                <label className={labelCls}>Date</label>
                 <input type="date" value={signoffDate} readOnly className={`${inputCls} cursor-default`} />
               </div>
             </div>
 
             {/* Signature */}
             <div className="mt-6">
-              <label className="block text-sm font-medium text-[rgb(245,239,230/.6)]">Signature</label>
+              <label className={labelCls}>Signature</label>
               <div className="mt-2 flex gap-3">
                 <button
                   type="button"
