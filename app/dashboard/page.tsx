@@ -7,6 +7,7 @@ import app from "@/lib/firebaseClient";
 import { getOrgId, signOut } from "@/lib/auth";
 import { listDiaries } from "@/lib/diaryService";
 import type { SiteDiary } from "@/lib/types";
+import Link from "next/link";
 
 const SIGN_IN_URL = "https://fredconsol.co.uk/signin.html";
 
@@ -141,12 +142,14 @@ export default function DashboardPage() {
             <p className="text-sm text-[rgb(245,239,230/.6)]">Diary dashboard</p>
             <h1 className="text-3xl font-semibold text-[#F5EFE6]">Site diary entries</h1>
           </div>
-          <button
-            type="button"
-            className="rounded-full bg-[#2563eb] px-6 py-3 text-sm font-semibold text-white transition hover:bg-[#1d4ed8]"
-          >
-            New Diary Entry
-          </button>
+          <Link href="/diary/new">
+            <button
+              type="button"
+              className="rounded-full bg-[#2563eb] px-6 py-3 text-sm font-semibold text-white transition hover:bg-[#1d4ed8]"
+            >
+              New Diary Entry
+            </button>
+          </Link>
         </section>
 
         {loading ? (
@@ -163,12 +166,14 @@ export default function DashboardPage() {
           <div className="rounded-3xl border border-blue-900/20 bg-[#241b15] p-10 text-center text-[rgb(245,239,230/.6)]">
             <p className="text-lg font-semibold text-[#F5EFE6]">No diary entries yet.</p>
             <p className="mt-2 max-w-2xl mx-auto">Create a new diary entry to keep your site records up to date.</p>
-            <button
-              type="button"
-              className="mt-6 rounded-full bg-[#2563eb] px-6 py-3 text-sm font-semibold text-white transition hover:bg-[#1d4ed8]"
-            >
-              New Entry
-            </button>
+            <Link href="/diary/new">
+              <button
+                type="button"
+                className="mt-6 rounded-full bg-[#2563eb] px-6 py-3 text-sm font-semibold text-white transition hover:bg-[#1d4ed8]"
+              >
+                New Entry
+              </button>
+            </Link>
           </div>
         )}
       </div>
