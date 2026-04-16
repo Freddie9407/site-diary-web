@@ -89,6 +89,13 @@ export default function DashboardPage() {
         <p>
           <span className="font-semibold text-[#F5EFE6]">Site manager:</span> {diary.siteManager}
         </p>
+        {diary.linkedRamsRef && (
+          <p>
+            <span className="inline-flex items-center rounded-full bg-blue-900/40 px-3 py-0.5 text-xs font-medium text-blue-200">
+              RAMS: {diary.linkedRamsRef}
+            </span>
+          </p>
+        )}
       </div>
 
       <div className="mt-6 flex flex-wrap gap-3">

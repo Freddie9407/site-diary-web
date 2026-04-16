@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { getAuth, onAuthStateChanged } from "firebase/auth";
+import { collection, getDocs, getFirestore, query, where } from "firebase/firestore";
 import app from "@/lib/firebaseClient";
 import { getOrgId } from "@/lib/auth";
 import { createDiary, saveDiary, listDiaries } from "@/lib/diaryService";
@@ -36,6 +37,8 @@ type PlantDeliveryRow = { id: string; item: string; date: string; notes?: string
 type IncidentRow = { id: string; type: "incident" | "near-miss" | "accident"; description: string; injured?: string; actionTaken?: string };
 type ToolboxRow = { id: string; topic: string };
 
+type RamsDoc = { id: string; documentRef: string; projectName: string };
+
 type PreviousDiary = {
   id: string;
   date: string;
@@ -55,6 +58,15 @@ export default function NewDiaryPage() {
   const [date, setDate] = useState(new Date().toISOString().split("T")[0]);
   const [shiftType, setShiftType] = useState("Day Shift");
   const [siteManager, setSiteManager] = useState("");
+
+  // Linked RAMS
+  const [allRamsDocs, setAllRamsDocs] = useState<RamsDoc[]>([]);
+  const [ramsQuery, setRamsQuery] = useState("");
+  const [ramsOpen, setRamsOpen] = useState(false);
+  const [linkedRamsId, setLinkedRamsId] = useState("");
+  const [linkedRamsTitle, setLinkedRamsTitle] = useState("");
+  const [linkedRamsRef, setLinkedRamsRef] = useState("");
+  const ramsInputRef = useRef<HTMLInputElement>(null);
 
   // Weather (in Basic Info)
   const [weatherCondition, setWeatherCondition] = useState("");
@@ -116,6 +128,28 @@ export default function NewDiaryPage() {
     return () => unsubscribe();
   }, []);
 
+  // Fetch RAMS documents once orgId is available
+  useEffect(() => {
+    if (!orgId) return;
+    const db = getFirestore(app);
+    getDocs(
+      query(
+        collection(db, "orgs", orgId, "documents"),
+        where("status", "in", ["completed", "in-progress"]),
+      ),
+    )
+      .then((snap) => {
+        setAllRamsDocs(
+          snap.docs.map((d) => ({
+            id: d.id,
+            documentRef: (d.data().documentRef as string) || "",
+            projectName: (d.data().projectName as string) || "",
+          })),
+        );
+      })
+      .catch(() => {/* ignore — RAMS list is optional */});
+  }, [orgId]);
+
   const openImportModal = async () => {
     if (!orgId) return;
     setShowImportModal(true);
@@ -167,6 +201,9 @@ export default function NewDiaryPage() {
       additionalRemarks: weatherRemarks,
     },
     siteManager,
+    linkedRamsId: linkedRamsId || undefined,
+    linkedRamsTitle: linkedRamsTitle || undefined,
+    linkedRamsRef: linkedRamsRef || undefined,
     workers,
     subcontractors,
     visitors,
@@ -311,6 +348,104 @@ export default function NewDiaryPage() {
                   className={inputCls}
                 />
               </div>
+
+              {/* Linked RAMS Document */}
+              <div className="sm:col-span-2">
+                <label className="block text-sm font-medium text-[rgb(245,239,230/.6)]">
+                  Linked RAMS Document
+                </label>
+                {linkedRamsId ? (
+                  <div className="mt-1 flex items-center gap-3">
+                    <span className="inline-flex items-center rounded-full bg-blue-900/40 px-3 py-1 text-sm font-medium text-blue-200">
+                      RAMS: {linkedRamsRef}
+                    </span>
+                    <span className="text-sm text-[rgb(245,239,230/.6)]">{linkedRamsTitle}</span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setLinkedRamsId("");
+                        setLinkedRamsTitle("");
+                        setLinkedRamsRef("");
+                        setRamsQuery("");
+                      }}
+                      className="text-sm text-[rgb(245,239,230/.4)] hover:text-[#F5EFE6]"
+                    >
+                      ✕ Remove
+                    </button>
+                  </div>
+                ) : (
+                  <div className="relative mt-1">
+                    <input
+                      ref={ramsInputRef}
+                      type="text"
+                      value={ramsQuery}
+                      onChange={(e) => {
+                        setRamsQuery(e.target.value);
+                        setRamsOpen(true);
+                      }}
+                      onFocus={() => setRamsOpen(true)}
+                      onBlur={() => setTimeout(() => setRamsOpen(false), 150)}
+                      placeholder="Search RAMS documents…"
+                      className={inputCls}
+                    />
+                    {ramsOpen && (
+                      <ul className="absolute z-20 mt-1 max-h-52 w-full overflow-y-auto rounded-md border border-blue-900/30 bg-[#1a1410] shadow-lg">
+                        <li>
+                          <button
+                            type="button"
+                            onMouseDown={() => {
+                              setLinkedRamsId("");
+                              setLinkedRamsTitle("");
+                              setLinkedRamsRef("");
+                              setRamsQuery("");
+                              setRamsOpen(false);
+                            }}
+                            className="w-full px-4 py-2 text-left text-sm text-[rgb(245,239,230/.5)] hover:bg-[#241b15]"
+                          >
+                            None
+                          </button>
+                        </li>
+                        {allRamsDocs
+                          .filter((d) => {
+                            const q = ramsQuery.toLowerCase();
+                            return (
+                              !q ||
+                              d.documentRef.toLowerCase().includes(q) ||
+                              d.projectName.toLowerCase().includes(q)
+                            );
+                          })
+                          .map((d) => (
+                            <li key={d.id}>
+                              <button
+                                type="button"
+                                onMouseDown={() => {
+                                  setLinkedRamsId(d.id);
+                                  setLinkedRamsRef(d.documentRef);
+                                  setLinkedRamsTitle(d.projectName);
+                                  setRamsQuery("");
+                                  setRamsOpen(false);
+                                }}
+                                className="w-full px-4 py-2 text-left text-sm text-[#F5EFE6] hover:bg-[#241b15]"
+                              >
+                                <span className="font-medium">{d.documentRef}</span>
+                                {d.projectName && (
+                                  <span className="ml-2 text-[rgb(245,239,230/.6)]">— {d.projectName}</span>
+                                )}
+                              </button>
+                            </li>
+                          ))}
+                        {allRamsDocs.filter((d) => {
+                          const q = ramsQuery.toLowerCase();
+                          return !q || d.documentRef.toLowerCase().includes(q) || d.projectName.toLowerCase().includes(q);
+                        }).length === 0 && ramsQuery && (
+                          <li className="px-4 py-2 text-sm text-[rgb(245,239,230/.4)]">No documents found</li>
+                        )}
+                      </ul>
+                    )}
+                  </div>
+                )}
+              </div>
+
               <div>
                 <div className="flex items-center justify-between">
                   <label className="block text-sm font-medium text-[rgb(245,239,230/.6)]">

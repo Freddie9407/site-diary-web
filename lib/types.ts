@@ -98,6 +98,9 @@ export interface SiteDiary {
   shiftType: string;
   weather: WeatherInfo;
   siteManager: string;
+  linkedRamsId?: string;
+  linkedRamsTitle?: string;
+  linkedRamsRef?: string;
 
   // Section 2 — Labour
   workers: LabourEntry[];
