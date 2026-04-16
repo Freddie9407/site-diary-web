@@ -31,9 +31,14 @@ export default function Home() {
       return;
     }
 
-    async function evaluateAccess(uid: string) {
+    async function evaluateAccess(uid: string, orgIdValue: string) {
+      if (!uid || !orgIdValue) {
+        setStatus("upgrade");
+        return;
+      }
+
       const userProfile = await getDoc(doc(firestore, "users", uid));
-      const subscription = await getDoc(doc(firestore, "orgs", orgId, "subscription", "current"));
+      const subscription = await getDoc(doc(firestore, "orgs", orgIdValue, "subscription", "current"));
 
       if (!userProfile.exists() || !subscription.exists()) {
         setStatus("upgrade");
@@ -63,7 +68,7 @@ export default function Home() {
         if (!user) {
           throw new Error("Authentication did not complete.");
         }
-        await evaluateAccess(user.uid);
+        await evaluateAccess(user.uid, orgId);
       } catch (error) {
         setStatus("error");
         setMessage("Unable to sign in with the provided token. Please return to FredConSol and try again.");
@@ -77,7 +82,7 @@ export default function Home() {
 
     const unsubscribe = onAuthStateChanged(auth, (user) => {
       if (user) {
-        evaluateAccess(user.uid);
+        evaluateAccess(user.uid, orgId);
       } else {
         window.location.href = SIGN_IN_URL;
       }
