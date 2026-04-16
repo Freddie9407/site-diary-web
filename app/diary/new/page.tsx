@@ -2,11 +2,11 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { getAuth, onAuthStateChanged } from "firebase/auth";
+import { getAuth, signInWithCustomToken, onAuthStateChanged } from "firebase/auth";
 import app from "@/lib/firebaseClient";
 import { getOrgId } from "@/lib/auth";
 import { createDiary, saveDiary } from "@/lib/diaryService";
-import type { SiteDiary } from "@/lib/types";
+import type { SiteDiary, ToolboxTalk } from "@/lib/types";
 
 const SIGN_IN_URL = "https://fredconsol.co.uk/signin.html";
 
@@ -74,7 +74,7 @@ export default function NewDiaryPage() {
   const [incidents, setIncidents] = useState<Array<{ id: string; type: 'incident' | 'near-miss' | 'accident'; description: string; injured?: string; actionTaken?: string }>>([]);
   const [inspections, setInspections] = useState<Array<{ id: string; work: string; inspectedBy: string; result: 'approved' | 'rejected' | 'conditional'; notes?: string }>>([]);
   const [tests, setTests] = useState<Array<{ id: string; type: string; result: string; by?: string; notes?: string }>>([]);
-  const [toolboxTalks, setToolboxTalks] = useState<Array<{ topic: string; attendees: number }>>([]);
+  const [toolboxTalks, setToolboxTalks] = useState<ToolboxTalk[]>([]);
 
   // Photos
   const [photos, setPhotos] = useState<Array<{ id: string; url: string; caption?: string; section?: string; uploadedAt: string }>>([]);
@@ -225,7 +225,7 @@ export default function NewDiaryPage() {
   };
 
   const addToolboxTalk = () => {
-    setToolboxTalks([...toolboxTalks, { topic: "", attendees: 0 }]);
+    setToolboxTalks([...toolboxTalks, { id: crypto.randomUUID(), topic: "", attendees: 0 }]);
   };
 
   const removeToolboxTalk = (id: string) => {

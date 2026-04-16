@@ -124,6 +124,12 @@ export interface PhotoEntry {
   uploadedAt: string;
 }
 
+export interface ToolboxTalk {
+  id: string;
+  topic: string;
+  attendees: number;
+}
+
 export interface SiteDiary {
   id?: string;
   orgId: string;
@@ -169,7 +175,7 @@ export interface SiteDiary {
   incidents: IncidentEntry[];
   inspections: InspectionEntry[];
   tests: TestEntry[];
-  toolboxTalks: { topic: string; attendees: number }[];
+  toolboxTalks: ToolboxTalk[];
 
   // Section 8 — Photos
   photos: PhotoEntry[];
