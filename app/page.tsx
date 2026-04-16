@@ -1,65 +1,124 @@
-import Image from "next/image";
+"use client";
+
+import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
+import { getAuth, signInWithCustomToken, onAuthStateChanged } from "firebase/auth";
+import { getDoc, getFirestore, doc } from "firebase/firestore";
+import app from "@/lib/firebaseClient";
+import { getOrgId } from "@/lib/auth";
+
+const ALLOWED_PLANS = new Set([
+  "sc-monthly",
+  "sc-pro",
+  "sc-platinum",
+  "diary-monthly",
+]);
+const SIGN_IN_URL = "https://fredconsol.co.uk/signin.html";
 
 export default function Home() {
+  const router = useRouter();
+  const [status, setStatus] = useState<"loading" | "upgrade" | "error">("loading");
+  const [message, setMessage] = useState("Checking your access...");
+
+  useEffect(() => {
+    const auth = getAuth(app);
+    const firestore = getFirestore(app);
+    const token = new URL(window.location.href).searchParams.get("token");
+    const orgId = getOrgId();
+
+    if (!orgId) {
+      window.location.href = SIGN_IN_URL;
+      return;
+    }
+
+    async function evaluateAccess(uid: string) {
+      const userProfile = await getDoc(doc(firestore, "users", uid));
+      const subscription = await getDoc(doc(firestore, "orgs", orgId, "subscription", "current"));
+
+      if (!userProfile.exists() || !subscription.exists()) {
+        setStatus("upgrade");
+        setMessage("We could not verify access for this account. Please upgrade or sign in again.");
+        return;
+      }
+
+      const planId = subscription.data()?.planId as string | undefined;
+      const diaryEntriesUsed = subscription.data()?.diaryEntriesUsed as number | undefined;
+      const hasDiaryAccess =
+        ALLOWED_PLANS.has(planId ?? "") ||
+        (planId === "free-trial" && (diaryEntriesUsed ?? 0) < 1);
+
+      if (!hasDiaryAccess) {
+        setStatus("upgrade");
+        setMessage("Diary access requires a qualifying plan or a free trial with available entries.");
+        return;
+      }
+
+      router.replace("/dashboard");
+    }
+
+    async function trySignIn(customToken: string) {
+      try {
+        await signInWithCustomToken(auth, customToken);
+        const user = auth.currentUser;
+        if (!user) {
+          throw new Error("Authentication did not complete.");
+        }
+        await evaluateAccess(user.uid);
+      } catch (error) {
+        setStatus("error");
+        setMessage("Unable to sign in with the provided token. Please return to FredConSol and try again.");
+      }
+    }
+
+    if (token) {
+      trySignIn(token);
+      return;
+    }
+
+    const unsubscribe = onAuthStateChanged(auth, (user) => {
+      if (user) {
+        evaluateAccess(user.uid);
+      } else {
+        window.location.href = SIGN_IN_URL;
+      }
+    });
+
+    return () => unsubscribe();
+  }, [router]);
+
   return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the page.tsx file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
+    <main className="min-h-screen bg-[#1a1410] px-6 py-16 text-[#F5EFE6] sm:px-10 lg:px-20">
+      <div className="mx-auto flex max-w-4xl flex-col gap-8">
+        <div className="rounded-3xl border border-blue-900/20 bg-[#241b15] p-10 shadow-sm">
+          <h1 className="text-4xl font-semibold text-[#F5EFE6]">FredConSol Site Diary</h1>
+          <p className="mt-3 max-w-2xl text-lg text-[rgb(245,239,230/.7)]">Signing you in and verifying diary access for your organisation.</p>
         </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
-        </div>
-      </main>
-    </div>
+
+        {status === "loading" ? (
+          <div className="rounded-3xl border border-blue-900/20 bg-[#241b15] p-10 text-center text-[rgb(245,239,230/.7)]">
+            {message}
+          </div>
+        ) : (
+          <div className="rounded-3xl border border-blue-900/20 bg-[#241b15] p-10 text-[rgb(245,239,230/.7)]">
+            <h2 className="text-2xl font-semibold text-[#F5EFE6]">Access required</h2>
+            <p className="mt-4 text-base leading-7">{message}</p>
+            {status === "upgrade" && (
+              <div className="mt-8 flex flex-col gap-4 sm:flex-row sm:items-center">
+                <div className="rounded-3xl border border-blue-900/20 bg-[#20180f] p-6">
+                  <p className="text-sm uppercase tracking-[0.2em] text-[rgb(245,239,230/.6)]">Upgrade offer</p>
+                  <p className="mt-3 text-3xl font-semibold text-[#ea580c]">£5 / month</p>
+                </div>
+                <a
+                  href="https://fredconsol.co.uk/dashboard.html"
+                  className="inline-flex items-center justify-center rounded-full bg-[#2563eb] px-6 py-3 text-sm font-semibold text-white transition hover:bg-[#1d4ed8]"
+                >
+                  Upgrade now
+                </a>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    </main>
   );
 }
