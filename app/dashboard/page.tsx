@@ -122,7 +122,7 @@ export default function DashboardPage() {
             <div className="flex flex-wrap gap-3">
               <a
                 href="https://fredconsol.co.uk/dashboard.html"
-                className="rounded-full bg-transparent px-4 py-2 text-sm text-[#F5EFE6] transition hover:text-[#ea580c]"
+                className="rounded-full bg-transparent px-4 py-2 text-sm text-[#F5EFE6] transition hover:text-[#2563eb]"
               >
                 ← Back to Main Dashboard
               </a>

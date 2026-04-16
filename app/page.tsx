@@ -58,7 +58,7 @@ export default function Home() {
         return;
       }
 
-      router.replace("/dashboard");
+      router.replace("/diary/new");
     }
 
     async function trySignIn(customToken: string) {
@@ -123,7 +123,7 @@ export default function Home() {
               <div className="mt-8 flex flex-col gap-4 sm:flex-row sm:items-center">
                 <div className="rounded-3xl border border-blue-900/20 bg-[#20180f] p-6">
                   <p className="text-sm uppercase tracking-[0.2em] text-[rgb(245,239,230/.6)]">Upgrade offer</p>
-                  <p className="mt-3 text-3xl font-semibold text-[#ea580c]">£5 / month</p>
+                  <p className="mt-3 text-3xl font-semibold text-[#2563eb]">£5 / month</p>
                 </div>
                 <a
                   href="https://fredconsol.co.uk/dashboard.html"

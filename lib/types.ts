@@ -2,17 +2,22 @@ export type DiaryStatus = 'draft' | 'completed';
 
 export interface WeatherInfo {
   condition: string;
-  temperature?: string;
-  wind?: string;
-  rainfall?: string;
+  notApplicable: boolean;
+  additionalRemarks?: string;
 }
 
 export interface LabourEntry {
   id: string;
-  name: string;
   trade: string;
+  numberOfWorkers: number;
   company: string;
-  vehicleReg?: string;
+}
+
+export interface SubcontractorEntry {
+  id: string;
+  trade: string;
+  numberOfWorkers: number;
+  company: string;
 }
 
 export interface VisitorEntry {
@@ -20,22 +25,18 @@ export interface VisitorEntry {
   name: string;
   company: string;
   purpose: string;
-  timeIn?: string;
-  timeOut?: string;
 }
 
 export interface WorkActivity {
   id: string;
-  area: string;
   description: string;
-  progress?: string;
 }
 
 export interface PlantItem {
   id: string;
   item: string;
   supplier?: string;
-  checkStatus: 'ok' | 'issue' | 'not-checked';
+  checkStatus: 'not-checked' | 'serviceable' | 'issue';
   notes?: string;
 }
 
@@ -61,59 +62,12 @@ export interface PlantBreakdown {
   actionTaken?: string;
 }
 
-export interface MaterialDelivery {
-  id: string;
-  material: string;
-  quantity: string;
-  supplier?: string;
-  notes?: string;
-  photoUrls?: string[];
-}
-
-export interface WasteEntry {
-  id: string;
-  type: string;
-  contractor?: string;
-  notes?: string;
-}
-
-export interface DelayEntry {
-  id: string;
-  cause: string;
-  duration?: string;
-  impact?: string;
-}
-
-export interface VariationEntry {
-  id: string;
-  description: string;
-  instructedBy?: string;
-  verbal: boolean;
-  notes?: string;
-}
-
 export interface IncidentEntry {
   id: string;
   type: 'incident' | 'near-miss' | 'accident';
   description: string;
   injured?: string;
   actionTaken?: string;
-}
-
-export interface InspectionEntry {
-  id: string;
-  work: string;
-  inspectedBy: string;
-  result: 'approved' | 'rejected' | 'conditional';
-  notes?: string;
-}
-
-export interface TestEntry {
-  id: string;
-  type: string;
-  result: string;
-  by?: string;
-  notes?: string;
 }
 
 export interface PhotoEntry {
@@ -127,7 +81,6 @@ export interface PhotoEntry {
 export interface ToolboxTalk {
   id: string;
   topic: string;
-  attendees: number;
 }
 
 export interface SiteDiary {
@@ -142,45 +95,33 @@ export interface SiteDiary {
   projectName: string;
   siteAddress: string;
   date: string;
-  dayOfWeek: string;
+  shiftType: string;
   weather: WeatherInfo;
-  workingHours: { start: string; end: string };
   siteManager: string;
 
   // Section 2 — Labour
   workers: LabourEntry[];
+  subcontractors: SubcontractorEntry[];
   visitors: VisitorEntry[];
 
   // Section 3 — Work Activities
   activities: WorkActivity[];
   milestones: string[];
 
-  // Section 4 — Plant
+  // Section 4 — Plant & Materials
   plantOnSite: PlantItem[];
   plantOffHired: PlantOffHire[];
   plantBreakdowns: PlantBreakdown[];
   plantDeliveries: PlantDelivery[];
 
-  // Section 5 — Materials
-  materialDeliveries: MaterialDelivery[];
-  materialShortages: string[];
-  waste: WasteEntry[];
-
-  // Section 6 — Issues
-  delays: DelayEntry[];
-  variations: VariationEntry[];
-  designQueries: string[];
-
-  // Section 7 — Health & Safety
+  // Section 5 — Health & Safety
   incidents: IncidentEntry[];
-  inspections: InspectionEntry[];
-  tests: TestEntry[];
   toolboxTalks: ToolboxTalk[];
 
-  // Section 8 — Photos
+  // Section 6 — Photos
   photos: PhotoEntry[];
 
-  // Section 9 — Notes & Sign-off
+  // Section 7 — Notes & Sign-off
   notes: string;
   signoff: {
     completedBy: string;
