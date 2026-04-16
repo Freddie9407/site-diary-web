@@ -68,6 +68,13 @@ export default function Home() {
         if (!user) {
           throw new Error("Authentication did not complete.");
         }
+
+        if (!orgId) {
+          setStatus("error");
+          setMessage("No organisation found. Please return to FredConSol and try again.");
+          return;
+        }
+
         await evaluateAccess(user.uid, orgId);
       } catch (error) {
         setStatus("error");
@@ -82,6 +89,11 @@ export default function Home() {
 
     const unsubscribe = onAuthStateChanged(auth, (user) => {
       if (user) {
+        if (!orgId) {
+          setStatus("error");
+          setMessage("No organisation found. Please return to FredConSol and try again.");
+          return;
+        }
         evaluateAccess(user.uid, orgId);
       } else {
         window.location.href = SIGN_IN_URL;
