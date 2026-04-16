@@ -81,6 +81,7 @@ export interface PhotoEntry {
 export interface ToolboxTalk {
   id: string;
   topic: string;
+  remarks?: string;
 }
 
 export interface SiteDiary {
@@ -129,6 +130,7 @@ export interface SiteDiary {
   signoff: {
     completedBy: string;
     title: string;
+    company?: string;
     date: string;
     signatureUrl?: string;
   };

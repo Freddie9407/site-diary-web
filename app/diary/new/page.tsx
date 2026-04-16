@@ -1,17 +1,31 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { getAuth, onAuthStateChanged } from "firebase/auth";
-import { collection, getDocs, getFirestore, query, where } from "firebase/firestore";
+import { collection, doc, getDoc, getDocs, getFirestore, query, where } from "firebase/firestore";
+import { getDownloadURL, getStorage, ref as storageRef, uploadBytes } from "firebase/storage";
 import app from "@/lib/firebaseClient";
 import { getOrgId } from "@/lib/auth";
 import { createDiary, saveDiary, listDiaries } from "@/lib/diaryService";
-import type { SiteDiary } from "@/lib/types";
+import type { PhotoEntry, SiteDiary } from "@/lib/types";
 
 const SIGN_IN_URL = "https://fredconsol.co.uk/signin.html";
 
 const SHIFT_TYPES = ["Day Shift", "Night Shift", "Split Shift", "Weekend", "Other"];
 const INCIDENT_TYPES = ["incident", "near-miss", "accident"];
+const WEATHER_CONDITIONS = [
+  "Sunny",
+  "Partly Cloudy",
+  "Overcast",
+  "Light Rain",
+  "Heavy Rain",
+  "Thunderstorm",
+  "Snow",
+  "Frost/Ice",
+  "Fog",
+  "High Wind",
+  "Not Applicable",
+];
 
 const inputCls =
   "mt-1 w-full rounded-md border border-blue-900/20 bg-[#241b15] px-3 py-2 text-[#F5EFE6] focus:border-blue-700/40 focus:outline-none";
@@ -19,10 +33,31 @@ const inlineCls =
   "rounded-md border border-blue-900/20 bg-[#241b15] px-3 py-2 text-[#F5EFE6] focus:border-blue-700/40 focus:outline-none";
 const addBtn =
   "rounded-full bg-[#2563eb] px-3 py-1 text-sm font-medium text-white transition hover:bg-[#1d4ed8]";
-const delBtn =
-  "rounded-md bg-red-600 px-3 py-2 text-white transition hover:bg-red-700";
 const sectionHeading =
   "mb-6 text-2xl font-semibold text-[#F5EFE6] border-b-2 border-[#2563eb] pb-2";
+
+function TrashBtn({ onClick }: { onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="self-center p-1 text-red-400 transition hover:text-red-300"
+    >
+      <svg
+        xmlns="http://www.w3.org/2000/svg"
+        className="h-5 w-5"
+        viewBox="0 0 20 20"
+        fill="currentColor"
+      >
+        <path
+          fillRule="evenodd"
+          d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v6a1 1 0 102 0V8a1 1 0 00-1-1z"
+          clipRule="evenodd"
+        />
+      </svg>
+    </button>
+  );
+}
 
 type PlantCheckStatus = "not-checked" | "serviceable" | "issue";
 
@@ -35,16 +70,21 @@ type PlantOffHireRow = { id: string; item: string; date: string; notes?: string 
 type PlantBreakdownRow = { id: string; item: string; issue: string; actionTaken?: string };
 type PlantDeliveryRow = { id: string; item: string; date: string; notes?: string; photoUrls?: string[] };
 type IncidentRow = { id: string; type: "incident" | "near-miss" | "accident"; description: string; injured?: string; actionTaken?: string };
-type ToolboxRow = { id: string; topic: string };
-
+type ToolboxRow = { id: string; topic: string; remarks?: string; showRemarks?: boolean };
+type PhotoRow = PhotoEntry & { uploading?: boolean };
 type RamsDoc = { id: string; documentRef: string; projectName: string };
+type PreviousDiary = { id: string; date: string; projectName: string; plantOnSite: PlantOnSiteRow[] };
 
-type PreviousDiary = {
-  id: string;
-  date: string;
-  projectName: string;
-  plantOnSite: PlantOnSiteRow[];
-};
+function getCanvasPos(canvas: HTMLCanvasElement, e: React.MouseEvent | React.TouchEvent) {
+  const rect = canvas.getBoundingClientRect();
+  const scaleX = canvas.width / rect.width;
+  const scaleY = canvas.height / rect.height;
+  if ("touches" in e) {
+    const t = e.touches[0];
+    return { x: (t.clientX - rect.left) * scaleX, y: (t.clientY - rect.top) * scaleY };
+  }
+  return { x: (e.clientX - rect.left) * scaleX, y: (e.clientY - rect.top) * scaleY };
+}
 
 export default function NewDiaryPage() {
   const [orgId, setOrgId] = useState<string | null>(null);
@@ -68,9 +108,8 @@ export default function NewDiaryPage() {
   const [linkedRamsRef, setLinkedRamsRef] = useState("");
   const ramsInputRef = useRef<HTMLInputElement>(null);
 
-  // Weather (in Basic Info)
+  // Weather (dropdown, no separate N/A state — derived from value)
   const [weatherCondition, setWeatherCondition] = useState("");
-  const [weatherNotApplicable, setWeatherNotApplicable] = useState(false);
   const [weatherRemarks, setWeatherRemarks] = useState("");
 
   // Labour & Personnel
@@ -98,7 +137,9 @@ export default function NewDiaryPage() {
   const [toolboxTalks, setToolboxTalks] = useState<ToolboxRow[]>([]);
 
   // Photos
-  const [photos] = useState<Array<{ id: string; url: string; caption?: string; uploadedAt: string }>>([]);
+  const [photos, setPhotos] = useState<PhotoRow[]>([]);
+  const cameraInputRef = useRef<HTMLInputElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Additional Notes
   const [notes, setNotes] = useState("");
@@ -106,8 +147,16 @@ export default function NewDiaryPage() {
   // Sign-off
   const [signoffCompletedBy, setSignoffCompletedBy] = useState("");
   const [signoffTitle, setSignoffTitle] = useState("");
-  const [signoffDate, setSignoffDate] = useState(new Date().toISOString().split("T")[0]);
+  const [signoffCompany, setSignoffCompany] = useState("");
+  const [signoffDate] = useState(new Date().toISOString().split("T")[0]);
+  const [sigMode, setSigMode] = useState<"none" | "draw" | "upload">("none");
+  const [signatureDataUrl, setSignatureDataUrl] = useState("");
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const sigDrawing = useRef(false);
+  const sigLastPos = useRef({ x: 0, y: 0 });
+  const sigUploadRef = useRef<HTMLInputElement>(null);
 
+  // ── Auth & orgId ──────────────────────────────────────────
   useEffect(() => {
     const oid = getOrgId();
     if (!oid) {
@@ -128,7 +177,22 @@ export default function NewDiaryPage() {
     return () => unsubscribe();
   }, []);
 
-  // Fetch RAMS documents once orgId is available
+  // ── Fetch user profile for sign-off pre-fill ──────────────
+  useEffect(() => {
+    if (!userId) return;
+    const db = getFirestore(app);
+    getDoc(doc(db, "users", userId))
+      .then((snap) => {
+        if (!snap.exists()) return;
+        const d = snap.data();
+        if (d.fullName) setSignoffCompletedBy(d.fullName as string);
+        if (d.trade) setSignoffTitle(d.trade as string);
+        if (d.companyName) setSignoffCompany(d.companyName as string);
+      })
+      .catch(() => {/* optional */});
+  }, [userId]);
+
+  // ── Fetch RAMS documents ───────────────────────────────────
   useEffect(() => {
     if (!orgId) return;
     const db = getFirestore(app);
@@ -147,9 +211,115 @@ export default function NewDiaryPage() {
           })),
         );
       })
-      .catch(() => {/* ignore — RAMS list is optional */});
+      .catch(() => {/* RAMS list is optional */});
   }, [orgId]);
 
+  // ── Photo upload ───────────────────────────────────────────
+  const handlePhotoFile = useCallback(
+    async (file: File) => {
+      if (!orgId) return;
+      const tempId = `tmp-${Date.now()}`;
+      const previewUrl = URL.createObjectURL(file);
+      setPhotos((prev) => [
+        ...prev,
+        { id: tempId, url: previewUrl, caption: "", uploadedAt: new Date().toISOString(), uploading: true },
+      ]);
+
+      try {
+        // Auto-save to get a diaryId if we don't have one yet
+        let dId = diaryId;
+        if (!dId && userId) {
+          dId = await createDiary(orgId, userId, {
+            status: "draft",
+            projectName,
+            siteAddress,
+            date,
+            shiftType,
+            siteManager,
+            weather: { condition: weatherCondition, notApplicable: weatherCondition === "Not Applicable" },
+            workers: [],
+            subcontractors: [],
+            visitors: [],
+            activities: [],
+            milestones: [],
+            plantOnSite: [],
+            plantOffHired: [],
+            plantBreakdowns: [],
+            plantDeliveries: [],
+            incidents: [],
+            toolboxTalks: [],
+            photos: [],
+            notes: "",
+            signoff: { completedBy: signoffCompletedBy, title: signoffTitle, date: signoffDate },
+          });
+          setDiaryId(dId);
+        }
+        if (!dId) throw new Error("No diary ID");
+
+        const storage = getStorage(app);
+        const ext = file.name.split(".").pop() || "jpg";
+        const filename = `${Date.now()}.${ext}`;
+        const photoRef = storageRef(storage, `orgs/${orgId}/siteDiaries/${dId}/photos/${filename}`);
+        await uploadBytes(photoRef, file);
+        const downloadUrl = await getDownloadURL(photoRef);
+
+        URL.revokeObjectURL(previewUrl);
+        setPhotos((prev) =>
+          prev.map((p) => (p.id === tempId ? { ...p, id: filename, url: downloadUrl, uploading: false } : p)),
+        );
+      } catch {
+        URL.revokeObjectURL(previewUrl);
+        setPhotos((prev) => prev.filter((p) => p.id !== tempId));
+        alert("Photo upload failed — please try again.");
+      }
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [orgId, userId, diaryId, projectName, siteAddress, date, shiftType, siteManager, weatherCondition, signoffCompletedBy, signoffTitle, signoffDate],
+  );
+
+  // ── Signature canvas ───────────────────────────────────────
+  const startSigDraw = (e: React.MouseEvent | React.TouchEvent) => {
+    if (!canvasRef.current) return;
+    e.preventDefault();
+    sigDrawing.current = true;
+    sigLastPos.current = getCanvasPos(canvasRef.current, e);
+  };
+  const drawSig = (e: React.MouseEvent | React.TouchEvent) => {
+    if (!sigDrawing.current || !canvasRef.current) return;
+    e.preventDefault();
+    const canvas = canvasRef.current;
+    const ctx = canvas.getContext("2d")!;
+    const pos = getCanvasPos(canvas, e);
+    ctx.beginPath();
+    ctx.moveTo(sigLastPos.current.x, sigLastPos.current.y);
+    ctx.lineTo(pos.x, pos.y);
+    ctx.strokeStyle = "#F5EFE6";
+    ctx.lineWidth = 2;
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+    ctx.stroke();
+    sigLastPos.current = pos;
+  };
+  const stopSigDraw = () => {
+    if (!sigDrawing.current) return;
+    sigDrawing.current = false;
+    setSignatureDataUrl(canvasRef.current?.toDataURL() ?? "");
+  };
+  const clearSig = () => {
+    if (!canvasRef.current) return;
+    const ctx = canvasRef.current.getContext("2d")!;
+    ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
+    setSignatureDataUrl("");
+  };
+  const handleSigUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => setSignatureDataUrl((ev.target?.result as string) ?? "");
+    reader.readAsDataURL(file);
+  };
+
+  // ── Import plant modal ─────────────────────────────────────
   const openImportModal = async () => {
     if (!orgId) return;
     setShowImportModal(true);
@@ -165,11 +335,9 @@ export default function NewDiaryPage() {
             projectName: d.projectName,
             plantOnSite: (d.plantOnSite ?? []).map((p) => ({
               ...p,
-              checkStatus: (
-                (p.checkStatus as string) === "ok" ? "serviceable" : p.checkStatus
-              ) as PlantCheckStatus,
+              checkStatus: ((p.checkStatus as string) === "ok" ? "serviceable" : p.checkStatus) as PlantCheckStatus,
             })),
-          }))
+          })),
       );
     } catch {
       // ignore
@@ -181,14 +349,12 @@ export default function NewDiaryPage() {
   const importPlantFromDiary = (diary: PreviousDiary) => {
     setPlantOnSite([
       ...plantOnSite,
-      ...diary.plantOnSite.map((p) => ({
-        ...p,
-        id: `${Date.now()}-${Math.random()}`,
-      })),
+      ...diary.plantOnSite.map((p) => ({ ...p, id: `${Date.now()}-${Math.random()}` })),
     ]);
     setShowImportModal(false);
   };
 
+  // ── Build save payload ─────────────────────────────────────
   const buildData = (status: "draft" | "completed"): Partial<SiteDiary> => ({
     status,
     projectName,
@@ -197,7 +363,7 @@ export default function NewDiaryPage() {
     shiftType,
     weather: {
       condition: weatherCondition,
-      notApplicable: weatherNotApplicable,
+      notApplicable: weatherCondition === "Not Applicable",
       additionalRemarks: weatherRemarks,
     },
     siteManager,
@@ -214,13 +380,15 @@ export default function NewDiaryPage() {
     plantBreakdowns,
     plantDeliveries,
     incidents,
-    toolboxTalks,
-    photos,
+    toolboxTalks: toolboxTalks.map(({ showRemarks: _sr, ...t }) => t),
+    photos: photos.filter((p) => !p.uploading).map(({ uploading: _u, ...p }) => p as PhotoEntry),
     notes,
     signoff: {
       completedBy: signoffCompletedBy,
       title: signoffTitle,
+      company: signoffCompany,
       date: signoffDate,
+      signatureUrl: signatureDataUrl || undefined,
     },
   });
 
@@ -263,15 +431,14 @@ export default function NewDiaryPage() {
     }
   };
 
+  // ── JSX ────────────────────────────────────────────────────
   return (
     <div className="min-h-screen bg-[#1a1410] text-[#F5EFE6]">
+
       {/* Sticky Header */}
       <header className="sticky top-0 z-10 border-b border-blue-900/20 bg-[#241b15] px-4 py-4 shadow-sm sm:px-8 lg:px-16">
         <div className="mx-auto flex max-w-6xl items-center justify-between">
-          <a
-            href="https://fredconsol.co.uk/dashboard.html"
-            className="text-[#F5EFE6] hover:text-[#2563eb]"
-          >
+          <a href="https://fredconsol.co.uk/dashboard.html" className="text-[#F5EFE6] hover:text-[#2563eb]">
             ← Dashboard
           </a>
           <div className="flex gap-3">
@@ -300,60 +467,50 @@ export default function NewDiaryPage() {
           <section>
             <h2 className={sectionHeading}>Basic Info</h2>
             <div className="grid gap-4 sm:grid-cols-2">
+
               <div>
                 <label className="block text-sm font-medium text-[rgb(245,239,230/.6)]">Project Name</label>
-                <input
-                  type="text"
-                  value={projectName}
-                  onChange={(e) => setProjectName(e.target.value)}
-                  className={inputCls}
-                />
+                <input type="text" value={projectName} onChange={(e) => setProjectName(e.target.value)} className={inputCls} />
               </div>
               <div>
                 <label className="block text-sm font-medium text-[rgb(245,239,230/.6)]">Site Address</label>
-                <input
-                  type="text"
-                  value={siteAddress}
-                  onChange={(e) => setSiteAddress(e.target.value)}
-                  className={inputCls}
-                />
+                <input type="text" value={siteAddress} onChange={(e) => setSiteAddress(e.target.value)} className={inputCls} />
               </div>
               <div>
                 <label className="block text-sm font-medium text-[rgb(245,239,230/.6)]">Date</label>
-                <input
-                  type="date"
-                  value={date}
-                  onChange={(e) => setDate(e.target.value)}
-                  className={inputCls}
-                />
+                <input type="date" value={date} onChange={(e) => setDate(e.target.value)} className={inputCls} />
               </div>
               <div>
                 <label className="block text-sm font-medium text-[rgb(245,239,230/.6)]">Shift Type</label>
-                <select
-                  value={shiftType}
-                  onChange={(e) => setShiftType(e.target.value)}
-                  className={inputCls}
-                >
-                  {SHIFT_TYPES.map((s) => (
-                    <option key={s} value={s}>{s}</option>
-                  ))}
+                <select value={shiftType} onChange={(e) => setShiftType(e.target.value)} className={inputCls}>
+                  {SHIFT_TYPES.map((s) => <option key={s} value={s}>{s}</option>)}
                 </select>
               </div>
               <div>
                 <label className="block text-sm font-medium text-[rgb(245,239,230/.6)]">Site Manager</label>
+                <input type="text" value={siteManager} onChange={(e) => setSiteManager(e.target.value)} className={inputCls} />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-[rgb(245,239,230/.6)]">Weather Condition</label>
+                <select value={weatherCondition} onChange={(e) => setWeatherCondition(e.target.value)} className={inputCls}>
+                  <option value="">Select condition</option>
+                  {WEATHER_CONDITIONS.map((c) => <option key={c} value={c}>{c}</option>)}
+                </select>
+              </div>
+              <div className="sm:col-span-2">
+                <label className="block text-sm font-medium text-[rgb(245,239,230/.6)]">Additional Weather Remarks</label>
                 <input
                   type="text"
-                  value={siteManager}
-                  onChange={(e) => setSiteManager(e.target.value)}
+                  value={weatherRemarks}
+                  onChange={(e) => setWeatherRemarks(e.target.value)}
+                  placeholder="e.g. Temp 12°C, Wind 25mph, Heavy rain until 10am"
                   className={inputCls}
                 />
               </div>
 
               {/* Linked RAMS Document */}
               <div className="sm:col-span-2">
-                <label className="block text-sm font-medium text-[rgb(245,239,230/.6)]">
-                  Linked RAMS Document
-                </label>
+                <label className="block text-sm font-medium text-[rgb(245,239,230/.6)]">Linked RAMS Document</label>
                 {linkedRamsId ? (
                   <div className="mt-1 flex items-center gap-3">
                     <span className="inline-flex items-center rounded-full bg-blue-900/40 px-3 py-1 text-sm font-medium text-blue-200">
@@ -362,12 +519,7 @@ export default function NewDiaryPage() {
                     <span className="text-sm text-[rgb(245,239,230/.6)]">{linkedRamsTitle}</span>
                     <button
                       type="button"
-                      onClick={() => {
-                        setLinkedRamsId("");
-                        setLinkedRamsTitle("");
-                        setLinkedRamsRef("");
-                        setRamsQuery("");
-                      }}
+                      onClick={() => { setLinkedRamsId(""); setLinkedRamsTitle(""); setLinkedRamsRef(""); setRamsQuery(""); }}
                       className="text-sm text-[rgb(245,239,230/.4)] hover:text-[#F5EFE6]"
                     >
                       ✕ Remove
@@ -379,10 +531,7 @@ export default function NewDiaryPage() {
                       ref={ramsInputRef}
                       type="text"
                       value={ramsQuery}
-                      onChange={(e) => {
-                        setRamsQuery(e.target.value);
-                        setRamsOpen(true);
-                      }}
+                      onChange={(e) => { setRamsQuery(e.target.value); setRamsOpen(true); }}
                       onFocus={() => setRamsOpen(true)}
                       onBlur={() => setTimeout(() => setRamsOpen(false), 150)}
                       placeholder="Search RAMS documents…"
@@ -393,51 +542,27 @@ export default function NewDiaryPage() {
                         <li>
                           <button
                             type="button"
-                            onMouseDown={() => {
-                              setLinkedRamsId("");
-                              setLinkedRamsTitle("");
-                              setLinkedRamsRef("");
-                              setRamsQuery("");
-                              setRamsOpen(false);
-                            }}
+                            onMouseDown={() => { setLinkedRamsId(""); setLinkedRamsTitle(""); setLinkedRamsRef(""); setRamsQuery(""); setRamsOpen(false); }}
                             className="w-full px-4 py-2 text-left text-sm text-[rgb(245,239,230/.5)] hover:bg-[#241b15]"
                           >
                             None
                           </button>
                         </li>
                         {allRamsDocs
-                          .filter((d) => {
-                            const q = ramsQuery.toLowerCase();
-                            return (
-                              !q ||
-                              d.documentRef.toLowerCase().includes(q) ||
-                              d.projectName.toLowerCase().includes(q)
-                            );
-                          })
+                          .filter((d) => { const q = ramsQuery.toLowerCase(); return !q || d.documentRef.toLowerCase().includes(q) || d.projectName.toLowerCase().includes(q); })
                           .map((d) => (
                             <li key={d.id}>
                               <button
                                 type="button"
-                                onMouseDown={() => {
-                                  setLinkedRamsId(d.id);
-                                  setLinkedRamsRef(d.documentRef);
-                                  setLinkedRamsTitle(d.projectName);
-                                  setRamsQuery("");
-                                  setRamsOpen(false);
-                                }}
+                                onMouseDown={() => { setLinkedRamsId(d.id); setLinkedRamsRef(d.documentRef); setLinkedRamsTitle(d.projectName); setRamsQuery(""); setRamsOpen(false); }}
                                 className="w-full px-4 py-2 text-left text-sm text-[#F5EFE6] hover:bg-[#241b15]"
                               >
                                 <span className="font-medium">{d.documentRef}</span>
-                                {d.projectName && (
-                                  <span className="ml-2 text-[rgb(245,239,230/.6)]">— {d.projectName}</span>
-                                )}
+                                {d.projectName && <span className="ml-2 text-[rgb(245,239,230/.6)]">— {d.projectName}</span>}
                               </button>
                             </li>
                           ))}
-                        {allRamsDocs.filter((d) => {
-                          const q = ramsQuery.toLowerCase();
-                          return !q || d.documentRef.toLowerCase().includes(q) || d.projectName.toLowerCase().includes(q);
-                        }).length === 0 && ramsQuery && (
+                        {allRamsDocs.filter((d) => { const q = ramsQuery.toLowerCase(); return !q || d.documentRef.toLowerCase().includes(q) || d.projectName.toLowerCase().includes(q); }).length === 0 && ramsQuery && (
                           <li className="px-4 py-2 text-sm text-[rgb(245,239,230/.4)]">No documents found</li>
                         )}
                       </ul>
@@ -446,42 +571,6 @@ export default function NewDiaryPage() {
                 )}
               </div>
 
-              <div>
-                <div className="flex items-center justify-between">
-                  <label className="block text-sm font-medium text-[rgb(245,239,230/.6)]">
-                    Weather Condition
-                  </label>
-                  <label className="flex items-center gap-2 text-sm text-[rgb(245,239,230/.6)]">
-                    <input
-                      type="checkbox"
-                      checked={weatherNotApplicable}
-                      onChange={(e) => setWeatherNotApplicable(e.target.checked)}
-                      className="rounded border border-blue-900/20 bg-[#241b15]"
-                    />
-                    Not Applicable
-                  </label>
-                </div>
-                <input
-                  type="text"
-                  value={weatherCondition}
-                  onChange={(e) => setWeatherCondition(e.target.value)}
-                  disabled={weatherNotApplicable}
-                  placeholder="e.g. Overcast, Light Rain"
-                  className={`${inputCls} ${weatherNotApplicable ? "cursor-not-allowed opacity-40" : ""}`}
-                />
-              </div>
-              <div className="sm:col-span-2">
-                <label className="block text-sm font-medium text-[rgb(245,239,230/.6)]">
-                  Additional Weather Remarks
-                </label>
-                <input
-                  type="text"
-                  value={weatherRemarks}
-                  onChange={(e) => setWeatherRemarks(e.target.value)}
-                  placeholder="e.g. Temp 12°C, Wind 25mph, Heavy rain until 10am"
-                  className={inputCls}
-                />
-              </div>
             </div>
           </section>
 
@@ -494,57 +583,14 @@ export default function NewDiaryPage() {
               <div>
                 <div className="mb-4 flex items-center justify-between">
                   <h3 className="text-lg font-medium text-[#F5EFE6]">Workers ({workers.length})</h3>
-                  <button
-                    onClick={() =>
-                      setWorkers([...workers, { id: Date.now().toString(), trade: "", numberOfWorkers: 1, company: "" }])
-                    }
-                    className={addBtn}
-                  >
-                    Add Worker
-                  </button>
+                  <button onClick={() => setWorkers([...workers, { id: Date.now().toString(), trade: "", numberOfWorkers: 1, company: "" }])} className={addBtn}>Add Worker</button>
                 </div>
                 {workers.map((worker, index) => (
-                  <div key={worker.id} className="mb-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-                    <input
-                      type="text"
-                      placeholder="Trade / Type (e.g. Joiner, Labourer)"
-                      value={worker.trade}
-                      onChange={(e) => {
-                        const n = [...workers];
-                        n[index].trade = e.target.value;
-                        setWorkers(n);
-                      }}
-                      className={inlineCls}
-                    />
-                    <input
-                      type="number"
-                      placeholder="Number of Workers"
-                      min={1}
-                      value={worker.numberOfWorkers}
-                      onChange={(e) => {
-                        const n = [...workers];
-                        n[index].numberOfWorkers = parseInt(e.target.value) || 1;
-                        setWorkers(n);
-                      }}
-                      className={inlineCls}
-                    />
-                    <input
-                      type="text"
-                      placeholder="Company"
-                      value={worker.company}
-                      onChange={(e) => {
-                        const n = [...workers];
-                        n[index].company = e.target.value;
-                        setWorkers(n);
-                      }}
-                      className={inlineCls}
-                    />
-                    <button
-                      onClick={() => setWorkers(workers.filter((w) => w.id !== worker.id))}
-                      className={delBtn}
-                    >
-                      ×
-                    </button>
+                  <div key={worker.id} className="mb-4 grid gap-3 sm:grid-cols-[1fr_1fr_1fr_auto]">
+                    <input type="text" placeholder="Trade / Type (e.g. Joiner, Labourer)" value={worker.trade} onChange={(e) => { const n = [...workers]; n[index].trade = e.target.value; setWorkers(n); }} className={inlineCls} />
+                    <input type="number" placeholder="Number of Workers" min={1} value={worker.numberOfWorkers} onChange={(e) => { const n = [...workers]; n[index].numberOfWorkers = parseInt(e.target.value) || 1; setWorkers(n); }} className={inlineCls} />
+                    <input type="text" placeholder="Company" value={worker.company} onChange={(e) => { const n = [...workers]; n[index].company = e.target.value; setWorkers(n); }} className={inlineCls} />
+                    <TrashBtn onClick={() => setWorkers(workers.filter((w) => w.id !== worker.id))} />
                   </div>
                 ))}
               </div>
@@ -553,57 +599,14 @@ export default function NewDiaryPage() {
               <div>
                 <div className="mb-4 flex items-center justify-between">
                   <h3 className="text-lg font-medium text-[#F5EFE6]">Subcontractors ({subcontractors.length})</h3>
-                  <button
-                    onClick={() =>
-                      setSubcontractors([...subcontractors, { id: Date.now().toString(), trade: "", numberOfWorkers: 1, company: "" }])
-                    }
-                    className={addBtn}
-                  >
-                    Add Subcontractor
-                  </button>
+                  <button onClick={() => setSubcontractors([...subcontractors, { id: Date.now().toString(), trade: "", numberOfWorkers: 1, company: "" }])} className={addBtn}>Add Subcontractor</button>
                 </div>
                 {subcontractors.map((sub, index) => (
-                  <div key={sub.id} className="mb-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-                    <input
-                      type="text"
-                      placeholder="Trade / Type (e.g. Joiner, Labourer)"
-                      value={sub.trade}
-                      onChange={(e) => {
-                        const n = [...subcontractors];
-                        n[index].trade = e.target.value;
-                        setSubcontractors(n);
-                      }}
-                      className={inlineCls}
-                    />
-                    <input
-                      type="number"
-                      placeholder="Number of Workers"
-                      min={1}
-                      value={sub.numberOfWorkers}
-                      onChange={(e) => {
-                        const n = [...subcontractors];
-                        n[index].numberOfWorkers = parseInt(e.target.value) || 1;
-                        setSubcontractors(n);
-                      }}
-                      className={inlineCls}
-                    />
-                    <input
-                      type="text"
-                      placeholder="Company"
-                      value={sub.company}
-                      onChange={(e) => {
-                        const n = [...subcontractors];
-                        n[index].company = e.target.value;
-                        setSubcontractors(n);
-                      }}
-                      className={inlineCls}
-                    />
-                    <button
-                      onClick={() => setSubcontractors(subcontractors.filter((s) => s.id !== sub.id))}
-                      className={delBtn}
-                    >
-                      ×
-                    </button>
+                  <div key={sub.id} className="mb-4 grid gap-3 sm:grid-cols-[1fr_1fr_1fr_auto]">
+                    <input type="text" placeholder="Trade / Type (e.g. Joiner, Labourer)" value={sub.trade} onChange={(e) => { const n = [...subcontractors]; n[index].trade = e.target.value; setSubcontractors(n); }} className={inlineCls} />
+                    <input type="number" placeholder="Number of Workers" min={1} value={sub.numberOfWorkers} onChange={(e) => { const n = [...subcontractors]; n[index].numberOfWorkers = parseInt(e.target.value) || 1; setSubcontractors(n); }} className={inlineCls} />
+                    <input type="text" placeholder="Company" value={sub.company} onChange={(e) => { const n = [...subcontractors]; n[index].company = e.target.value; setSubcontractors(n); }} className={inlineCls} />
+                    <TrashBtn onClick={() => setSubcontractors(subcontractors.filter((s) => s.id !== sub.id))} />
                   </div>
                 ))}
               </div>
@@ -612,59 +615,18 @@ export default function NewDiaryPage() {
               <div>
                 <div className="mb-4 flex items-center justify-between">
                   <h3 className="text-lg font-medium text-[#F5EFE6]">Visitors ({visitors.length})</h3>
-                  <button
-                    onClick={() =>
-                      setVisitors([...visitors, { id: Date.now().toString(), name: "", company: "", purpose: "" }])
-                    }
-                    className={addBtn}
-                  >
-                    Add Visitor
-                  </button>
+                  <button onClick={() => setVisitors([...visitors, { id: Date.now().toString(), name: "", company: "", purpose: "" }])} className={addBtn}>Add Visitor</button>
                 </div>
                 {visitors.map((visitor, index) => (
-                  <div key={visitor.id} className="mb-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-                    <input
-                      type="text"
-                      placeholder="Name"
-                      value={visitor.name}
-                      onChange={(e) => {
-                        const n = [...visitors];
-                        n[index].name = e.target.value;
-                        setVisitors(n);
-                      }}
-                      className={inlineCls}
-                    />
-                    <input
-                      type="text"
-                      placeholder="Company"
-                      value={visitor.company}
-                      onChange={(e) => {
-                        const n = [...visitors];
-                        n[index].company = e.target.value;
-                        setVisitors(n);
-                      }}
-                      className={inlineCls}
-                    />
-                    <input
-                      type="text"
-                      placeholder="Purpose"
-                      value={visitor.purpose}
-                      onChange={(e) => {
-                        const n = [...visitors];
-                        n[index].purpose = e.target.value;
-                        setVisitors(n);
-                      }}
-                      className={inlineCls}
-                    />
-                    <button
-                      onClick={() => setVisitors(visitors.filter((v) => v.id !== visitor.id))}
-                      className={delBtn}
-                    >
-                      ×
-                    </button>
+                  <div key={visitor.id} className="mb-4 grid gap-3 sm:grid-cols-[1fr_1fr_1fr_auto]">
+                    <input type="text" placeholder="Name" value={visitor.name} onChange={(e) => { const n = [...visitors]; n[index].name = e.target.value; setVisitors(n); }} className={inlineCls} />
+                    <input type="text" placeholder="Company" value={visitor.company} onChange={(e) => { const n = [...visitors]; n[index].company = e.target.value; setVisitors(n); }} className={inlineCls} />
+                    <input type="text" placeholder="Purpose" value={visitor.purpose} onChange={(e) => { const n = [...visitors]; n[index].purpose = e.target.value; setVisitors(n); }} className={inlineCls} />
+                    <TrashBtn onClick={() => setVisitors(visitors.filter((v) => v.id !== visitor.id))} />
                   </div>
                 ))}
               </div>
+
             </div>
           </section>
 
@@ -676,34 +638,18 @@ export default function NewDiaryPage() {
               <div>
                 <div className="mb-4 flex items-center justify-between">
                   <h3 className="text-lg font-medium text-[#F5EFE6]">Activities ({activities.length})</h3>
-                  <button
-                    onClick={() =>
-                      setActivities([...activities, { id: Date.now().toString(), description: "" }])
-                    }
-                    className={addBtn}
-                  >
-                    Add Activity
-                  </button>
+                  <button onClick={() => setActivities([...activities, { id: Date.now().toString(), description: "" }])} className={addBtn}>Add Activity</button>
                 </div>
                 {activities.map((activity, index) => (
-                  <div key={activity.id} className="mb-4 flex gap-3">
+                  <div key={activity.id} className="mb-3 flex items-center gap-3">
                     <input
                       type="text"
                       placeholder="Description of work carried out"
                       value={activity.description}
-                      onChange={(e) => {
-                        const n = [...activities];
-                        n[index].description = e.target.value;
-                        setActivities(n);
-                      }}
+                      onChange={(e) => { const n = [...activities]; n[index].description = e.target.value; setActivities(n); }}
                       className="flex-1 rounded-md border border-blue-900/20 bg-[#241b15] px-3 py-2 text-[#F5EFE6] focus:border-blue-700/40 focus:outline-none"
                     />
-                    <button
-                      onClick={() => setActivities(activities.filter((a) => a.id !== activity.id))}
-                      className={delBtn}
-                    >
-                      ×
-                    </button>
+                    <TrashBtn onClick={() => setActivities(activities.filter((a) => a.id !== activity.id))} />
                   </div>
                 ))}
               </div>
@@ -711,37 +657,22 @@ export default function NewDiaryPage() {
               <div>
                 <div className="mb-4 flex items-center justify-between">
                   <h3 className="text-lg font-medium text-[#F5EFE6]">Milestones ({milestones.length})</h3>
-                  <button
-                    onClick={() =>
-                      setMilestones([...milestones, { id: Date.now().toString(), text: "" }])
-                    }
-                    className={addBtn}
-                  >
-                    Add Milestone
-                  </button>
+                  <button onClick={() => setMilestones([...milestones, { id: Date.now().toString(), text: "" }])} className={addBtn}>Add Milestone</button>
                 </div>
                 {milestones.map((milestone, index) => (
-                  <div key={milestone.id} className="mb-3 flex gap-3">
+                  <div key={milestone.id} className="mb-3 flex items-center gap-3">
                     <input
                       type="text"
                       placeholder="Milestone description"
                       value={milestone.text}
-                      onChange={(e) => {
-                        const n = [...milestones];
-                        n[index].text = e.target.value;
-                        setMilestones(n);
-                      }}
+                      onChange={(e) => { const n = [...milestones]; n[index].text = e.target.value; setMilestones(n); }}
                       className="flex-1 rounded-md border border-blue-900/20 bg-[#241b15] px-3 py-2 text-[#F5EFE6] focus:border-blue-700/40 focus:outline-none"
                     />
-                    <button
-                      onClick={() => setMilestones(milestones.filter((m) => m.id !== milestone.id))}
-                      className={delBtn}
-                    >
-                      ×
-                    </button>
+                    <TrashBtn onClick={() => setMilestones(milestones.filter((m) => m.id !== milestone.id))} />
                   </div>
                 ))}
               </div>
+
             </div>
           </section>
 
@@ -755,95 +686,36 @@ export default function NewDiaryPage() {
                 <div className="mb-4 flex items-center justify-between">
                   <h3 className="text-lg font-medium text-[#F5EFE6]">On Site ({plantOnSite.length})</h3>
                   <div className="flex gap-2">
-                    <button
-                      onClick={openImportModal}
-                      className="rounded-full border border-blue-900/30 px-3 py-1 text-sm font-medium text-[#F5EFE6] transition hover:border-blue-700/50 hover:bg-[#241b15]"
-                    >
+                    <button onClick={openImportModal} className="rounded-full border border-blue-900/30 px-3 py-1 text-sm font-medium text-[#F5EFE6] transition hover:border-blue-700/50 hover:bg-[#241b15]">
                       Import from Previous Diary
                     </button>
-                    <button
-                      onClick={() =>
-                        setPlantOnSite([
-                          ...plantOnSite,
-                          { id: Date.now().toString(), item: "", supplier: "", checkStatus: "not-checked", notes: "" },
-                        ])
-                      }
-                      className={addBtn}
-                    >
+                    <button onClick={() => setPlantOnSite([...plantOnSite, { id: Date.now().toString(), item: "", supplier: "", checkStatus: "not-checked", notes: "" }])} className={addBtn}>
                       Add Item
                     </button>
                   </div>
                 </div>
                 {plantOnSite.map((item, index) => (
-                  <div key={item.id} className="mb-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
-                    <input
-                      type="text"
-                      placeholder="Item"
-                      value={item.item}
-                      onChange={(e) => {
-                        const n = [...plantOnSite];
-                        n[index].item = e.target.value;
-                        setPlantOnSite(n);
-                      }}
-                      className={inlineCls}
-                    />
-                    <input
-                      type="text"
-                      placeholder="Supplier"
-                      value={item.supplier || ""}
-                      onChange={(e) => {
-                        const n = [...plantOnSite];
-                        n[index].supplier = e.target.value;
-                        setPlantOnSite(n);
-                      }}
-                      className={inlineCls}
-                    />
-                    {/* Toggle pill buttons */}
+                  <div key={item.id} className="mb-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-[1fr_1fr_auto_1fr_auto]">
+                    <input type="text" placeholder="Item" value={item.item} onChange={(e) => { const n = [...plantOnSite]; n[index].item = e.target.value; setPlantOnSite(n); }} className={inlineCls} />
+                    <input type="text" placeholder="Supplier" value={item.supplier || ""} onChange={(e) => { const n = [...plantOnSite]; n[index].supplier = e.target.value; setPlantOnSite(n); }} className={inlineCls} />
                     <div className="flex overflow-hidden rounded-md border border-blue-900/20">
                       {(["not-checked", "serviceable", "issue"] as PlantCheckStatus[]).map((status) => (
                         <button
                           key={status}
                           type="button"
-                          onClick={() => {
-                            const n = [...plantOnSite];
-                            n[index].checkStatus = status;
-                            setPlantOnSite(n);
-                          }}
-                          className={`flex-1 px-2 py-2 text-xs font-medium transition ${
+                          onClick={() => { const n = [...plantOnSite]; n[index].checkStatus = status; setPlantOnSite(n); }}
+                          className={`flex-1 whitespace-nowrap px-2 py-2 text-xs font-medium transition ${
                             item.checkStatus === status
-                              ? status === "issue"
-                                ? "bg-red-600 text-white"
-                                : status === "serviceable"
-                                ? "bg-green-700 text-white"
-                                : "bg-blue-900/60 text-[#F5EFE6]"
+                              ? status === "issue" ? "bg-red-600 text-white" : status === "serviceable" ? "bg-green-700 text-white" : "bg-blue-900/60 text-[#F5EFE6]"
                               : "bg-[#241b15] text-[rgb(245,239,230/.5)] hover:bg-[#2a2018]"
                           }`}
                         >
-                          {status === "not-checked"
-                            ? "Not Checked"
-                            : status === "serviceable"
-                            ? "Serviceable"
-                            : "Issue"}
+                          {status === "not-checked" ? "Not Checked" : status === "serviceable" ? "Serviceable" : "Issue"}
                         </button>
                       ))}
                     </div>
-                    <input
-                      type="text"
-                      placeholder="Notes"
-                      value={item.notes || ""}
-                      onChange={(e) => {
-                        const n = [...plantOnSite];
-                        n[index].notes = e.target.value;
-                        setPlantOnSite(n);
-                      }}
-                      className={inlineCls}
-                    />
-                    <button
-                      onClick={() => setPlantOnSite(plantOnSite.filter((p) => p.id !== item.id))}
-                      className={delBtn}
-                    >
-                      ×
-                    </button>
+                    <input type="text" placeholder="Notes" value={item.notes || ""} onChange={(e) => { const n = [...plantOnSite]; n[index].notes = e.target.value; setPlantOnSite(n); }} className={inlineCls} />
+                    <TrashBtn onClick={() => setPlantOnSite(plantOnSite.filter((p) => p.id !== item.id))} />
                   </div>
                 ))}
               </div>
@@ -852,58 +724,14 @@ export default function NewDiaryPage() {
               <div>
                 <div className="mb-4 flex items-center justify-between">
                   <h3 className="text-lg font-medium text-[#F5EFE6]">Off Hired ({plantOffHired.length})</h3>
-                  <button
-                    onClick={() =>
-                      setPlantOffHired([
-                        ...plantOffHired,
-                        { id: Date.now().toString(), item: "", date: new Date().toISOString().split("T")[0], notes: "" },
-                      ])
-                    }
-                    className={addBtn}
-                  >
-                    Add Item
-                  </button>
+                  <button onClick={() => setPlantOffHired([...plantOffHired, { id: Date.now().toString(), item: "", date: new Date().toISOString().split("T")[0], notes: "" }])} className={addBtn}>Add Item</button>
                 </div>
                 {plantOffHired.map((item, index) => (
-                  <div key={item.id} className="mb-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-                    <input
-                      type="text"
-                      placeholder="Item"
-                      value={item.item}
-                      onChange={(e) => {
-                        const n = [...plantOffHired];
-                        n[index].item = e.target.value;
-                        setPlantOffHired(n);
-                      }}
-                      className={inlineCls}
-                    />
-                    <input
-                      type="date"
-                      value={item.date}
-                      onChange={(e) => {
-                        const n = [...plantOffHired];
-                        n[index].date = e.target.value;
-                        setPlantOffHired(n);
-                      }}
-                      className={inlineCls}
-                    />
-                    <input
-                      type="text"
-                      placeholder="Notes"
-                      value={item.notes || ""}
-                      onChange={(e) => {
-                        const n = [...plantOffHired];
-                        n[index].notes = e.target.value;
-                        setPlantOffHired(n);
-                      }}
-                      className={inlineCls}
-                    />
-                    <button
-                      onClick={() => setPlantOffHired(plantOffHired.filter((p) => p.id !== item.id))}
-                      className={delBtn}
-                    >
-                      ×
-                    </button>
+                  <div key={item.id} className="mb-4 grid gap-3 sm:grid-cols-[1fr_1fr_1fr_auto]">
+                    <input type="text" placeholder="Item" value={item.item} onChange={(e) => { const n = [...plantOffHired]; n[index].item = e.target.value; setPlantOffHired(n); }} className={inlineCls} />
+                    <input type="date" value={item.date} onChange={(e) => { const n = [...plantOffHired]; n[index].date = e.target.value; setPlantOffHired(n); }} className={inlineCls} />
+                    <input type="text" placeholder="Notes" value={item.notes || ""} onChange={(e) => { const n = [...plantOffHired]; n[index].notes = e.target.value; setPlantOffHired(n); }} className={inlineCls} />
+                    <TrashBtn onClick={() => setPlantOffHired(plantOffHired.filter((p) => p.id !== item.id))} />
                   </div>
                 ))}
               </div>
@@ -912,59 +740,14 @@ export default function NewDiaryPage() {
               <div>
                 <div className="mb-4 flex items-center justify-between">
                   <h3 className="text-lg font-medium text-[#F5EFE6]">Breakdowns ({plantBreakdowns.length})</h3>
-                  <button
-                    onClick={() =>
-                      setPlantBreakdowns([
-                        ...plantBreakdowns,
-                        { id: Date.now().toString(), item: "", issue: "", actionTaken: "" },
-                      ])
-                    }
-                    className={addBtn}
-                  >
-                    Add Breakdown
-                  </button>
+                  <button onClick={() => setPlantBreakdowns([...plantBreakdowns, { id: Date.now().toString(), item: "", issue: "", actionTaken: "" }])} className={addBtn}>Add Breakdown</button>
                 </div>
                 {plantBreakdowns.map((item, index) => (
-                  <div key={item.id} className="mb-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-                    <input
-                      type="text"
-                      placeholder="Item"
-                      value={item.item}
-                      onChange={(e) => {
-                        const n = [...plantBreakdowns];
-                        n[index].item = e.target.value;
-                        setPlantBreakdowns(n);
-                      }}
-                      className={inlineCls}
-                    />
-                    <input
-                      type="text"
-                      placeholder="Issue"
-                      value={item.issue}
-                      onChange={(e) => {
-                        const n = [...plantBreakdowns];
-                        n[index].issue = e.target.value;
-                        setPlantBreakdowns(n);
-                      }}
-                      className={inlineCls}
-                    />
-                    <input
-                      type="text"
-                      placeholder="Action Taken"
-                      value={item.actionTaken || ""}
-                      onChange={(e) => {
-                        const n = [...plantBreakdowns];
-                        n[index].actionTaken = e.target.value;
-                        setPlantBreakdowns(n);
-                      }}
-                      className={inlineCls}
-                    />
-                    <button
-                      onClick={() => setPlantBreakdowns(plantBreakdowns.filter((p) => p.id !== item.id))}
-                      className={delBtn}
-                    >
-                      ×
-                    </button>
+                  <div key={item.id} className="mb-4 grid gap-3 sm:grid-cols-[1fr_1fr_1fr_auto]">
+                    <input type="text" placeholder="Item" value={item.item} onChange={(e) => { const n = [...plantBreakdowns]; n[index].item = e.target.value; setPlantBreakdowns(n); }} className={inlineCls} />
+                    <input type="text" placeholder="Issue" value={item.issue} onChange={(e) => { const n = [...plantBreakdowns]; n[index].issue = e.target.value; setPlantBreakdowns(n); }} className={inlineCls} />
+                    <input type="text" placeholder="Action Taken" value={item.actionTaken || ""} onChange={(e) => { const n = [...plantBreakdowns]; n[index].actionTaken = e.target.value; setPlantBreakdowns(n); }} className={inlineCls} />
+                    <TrashBtn onClick={() => setPlantBreakdowns(plantBreakdowns.filter((p) => p.id !== item.id))} />
                   </div>
                 ))}
               </div>
@@ -973,72 +756,18 @@ export default function NewDiaryPage() {
               <div>
                 <div className="mb-4 flex items-center justify-between">
                   <h3 className="text-lg font-medium text-[#F5EFE6]">Deliveries ({plantDeliveries.length})</h3>
-                  <button
-                    onClick={() =>
-                      setPlantDeliveries([
-                        ...plantDeliveries,
-                        {
-                          id: Date.now().toString(),
-                          item: "",
-                          date: new Date().toISOString().split("T")[0],
-                          notes: "",
-                          photoUrls: [],
-                        },
-                      ])
-                    }
-                    className={addBtn}
-                  >
-                    Add Delivery
-                  </button>
+                  <button onClick={() => setPlantDeliveries([...plantDeliveries, { id: Date.now().toString(), item: "", date: new Date().toISOString().split("T")[0], notes: "", photoUrls: [] }])} className={addBtn}>Add Delivery</button>
                 </div>
                 {plantDeliveries.map((item, index) => (
-                  <div key={item.id} className="mb-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-                    <input
-                      type="text"
-                      placeholder="Item"
-                      value={item.item}
-                      onChange={(e) => {
-                        const n = [...plantDeliveries];
-                        n[index].item = e.target.value;
-                        setPlantDeliveries(n);
-                      }}
-                      className={inlineCls}
-                    />
-                    <input
-                      type="date"
-                      value={item.date}
-                      onChange={(e) => {
-                        const n = [...plantDeliveries];
-                        n[index].date = e.target.value;
-                        setPlantDeliveries(n);
-                      }}
-                      className={inlineCls}
-                    />
-                    <input
-                      type="text"
-                      placeholder="Notes"
-                      value={item.notes || ""}
-                      onChange={(e) => {
-                        const n = [...plantDeliveries];
-                        n[index].notes = e.target.value;
-                        setPlantDeliveries(n);
-                      }}
-                      className={inlineCls}
-                    />
-                    <div className="flex gap-2">
-                      <button className="flex-1 rounded-md bg-[#2563eb] px-3 py-2 text-sm font-medium text-white transition hover:bg-[#1d4ed8]">
-                        Upload Photo
-                      </button>
-                      <button
-                        onClick={() => setPlantDeliveries(plantDeliveries.filter((p) => p.id !== item.id))}
-                        className={delBtn}
-                      >
-                        ×
-                      </button>
-                    </div>
+                  <div key={item.id} className="mb-4 grid gap-3 sm:grid-cols-[1fr_1fr_1fr_auto]">
+                    <input type="text" placeholder="Item" value={item.item} onChange={(e) => { const n = [...plantDeliveries]; n[index].item = e.target.value; setPlantDeliveries(n); }} className={inlineCls} />
+                    <input type="date" value={item.date} onChange={(e) => { const n = [...plantDeliveries]; n[index].date = e.target.value; setPlantDeliveries(n); }} className={inlineCls} />
+                    <input type="text" placeholder="Notes" value={item.notes || ""} onChange={(e) => { const n = [...plantDeliveries]; n[index].notes = e.target.value; setPlantDeliveries(n); }} className={inlineCls} />
+                    <TrashBtn onClick={() => setPlantDeliveries(plantDeliveries.filter((p) => p.id !== item.id))} />
                   </div>
                 ))}
               </div>
+
             </div>
           </section>
 
@@ -1051,72 +780,17 @@ export default function NewDiaryPage() {
               <div>
                 <div className="mb-4 flex items-center justify-between">
                   <h3 className="text-lg font-medium text-[#F5EFE6]">Incidents ({incidents.length})</h3>
-                  <button
-                    onClick={() =>
-                      setIncidents([
-                        ...incidents,
-                        { id: Date.now().toString(), type: "incident", description: "", injured: "", actionTaken: "" },
-                      ])
-                    }
-                    className={addBtn}
-                  >
-                    Add Incident
-                  </button>
+                  <button onClick={() => setIncidents([...incidents, { id: Date.now().toString(), type: "incident", description: "", injured: "", actionTaken: "" }])} className={addBtn}>Add Incident</button>
                 </div>
                 {incidents.map((item, index) => (
-                  <div key={item.id} className="mb-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
-                    <select
-                      value={item.type}
-                      onChange={(e) => {
-                        const n = [...incidents];
-                        n[index].type = e.target.value as "incident" | "near-miss" | "accident";
-                        setIncidents(n);
-                      }}
-                      className={inlineCls}
-                    >
-                      {INCIDENT_TYPES.map((t) => (
-                        <option key={t} value={t}>{t}</option>
-                      ))}
+                  <div key={item.id} className="mb-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-[auto_1fr_1fr_1fr_auto]">
+                    <select value={item.type} onChange={(e) => { const n = [...incidents]; n[index].type = e.target.value as "incident" | "near-miss" | "accident"; setIncidents(n); }} className={inlineCls}>
+                      {INCIDENT_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
                     </select>
-                    <input
-                      type="text"
-                      placeholder="Description"
-                      value={item.description}
-                      onChange={(e) => {
-                        const n = [...incidents];
-                        n[index].description = e.target.value;
-                        setIncidents(n);
-                      }}
-                      className={inlineCls}
-                    />
-                    <input
-                      type="text"
-                      placeholder="Injured Party"
-                      value={item.injured || ""}
-                      onChange={(e) => {
-                        const n = [...incidents];
-                        n[index].injured = e.target.value;
-                        setIncidents(n);
-                      }}
-                      className={inlineCls}
-                    />
-                    <input
-                      type="text"
-                      placeholder="Action Taken"
-                      value={item.actionTaken || ""}
-                      onChange={(e) => {
-                        const n = [...incidents];
-                        n[index].actionTaken = e.target.value;
-                        setIncidents(n);
-                      }}
-                      className={inlineCls}
-                    />
-                    <button
-                      onClick={() => setIncidents(incidents.filter((i) => i.id !== item.id))}
-                      className={delBtn}
-                    >
-                      ×
-                    </button>
+                    <input type="text" placeholder="Description" value={item.description} onChange={(e) => { const n = [...incidents]; n[index].description = e.target.value; setIncidents(n); }} className={inlineCls} />
+                    <input type="text" placeholder="Injured Party" value={item.injured || ""} onChange={(e) => { const n = [...incidents]; n[index].injured = e.target.value; setIncidents(n); }} className={inlineCls} />
+                    <input type="text" placeholder="Action Taken" value={item.actionTaken || ""} onChange={(e) => { const n = [...incidents]; n[index].actionTaken = e.target.value; setIncidents(n); }} className={inlineCls} />
+                    <TrashBtn onClick={() => setIncidents(incidents.filter((i) => i.id !== item.id))} />
                   </div>
                 ))}
               </div>
@@ -1125,37 +799,40 @@ export default function NewDiaryPage() {
               <div>
                 <div className="mb-4 flex items-center justify-between">
                   <h3 className="text-lg font-medium text-[#F5EFE6]">Toolbox Talks ({toolboxTalks.length})</h3>
-                  <button
-                    onClick={() =>
-                      setToolboxTalks([...toolboxTalks, { id: crypto.randomUUID(), topic: "" }])
-                    }
-                    className={addBtn}
-                  >
-                    Add Talk
-                  </button>
+                  <button onClick={() => setToolboxTalks([...toolboxTalks, { id: crypto.randomUUID(), topic: "", showRemarks: false }])} className={addBtn}>Add Talk</button>
                 </div>
                 {toolboxTalks.map((item, index) => (
-                  <div key={item.id} className="mb-3 flex gap-3">
-                    <input
-                      type="text"
-                      placeholder="Topic"
-                      value={item.topic}
-                      onChange={(e) => {
-                        const n = [...toolboxTalks];
-                        n[index].topic = e.target.value;
-                        setToolboxTalks(n);
-                      }}
-                      className="flex-1 rounded-md border border-blue-900/20 bg-[#241b15] px-3 py-2 text-[#F5EFE6] focus:border-blue-700/40 focus:outline-none"
-                    />
-                    <button
-                      onClick={() => setToolboxTalks(toolboxTalks.filter((t) => t.id !== item.id))}
-                      className={delBtn}
-                    >
-                      ×
-                    </button>
+                  <div key={item.id} className="mb-4">
+                    <div className="flex items-center gap-3">
+                      <input
+                        type="text"
+                        placeholder="Topic"
+                        value={item.topic}
+                        onChange={(e) => { const n = [...toolboxTalks]; n[index].topic = e.target.value; setToolboxTalks(n); }}
+                        className="flex-1 rounded-md border border-blue-900/20 bg-[#241b15] px-3 py-2 text-[#F5EFE6] focus:border-blue-700/40 focus:outline-none"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => { const n = [...toolboxTalks]; n[index].showRemarks = !n[index].showRemarks; setToolboxTalks(n); }}
+                        className="text-xs text-[rgb(245,239,230/.5)] hover:text-[#2563eb] whitespace-nowrap"
+                      >
+                        {item.showRemarks ? "Hide Remarks" : "Add Remarks"}
+                      </button>
+                      <TrashBtn onClick={() => setToolboxTalks(toolboxTalks.filter((t) => t.id !== item.id))} />
+                    </div>
+                    {item.showRemarks && (
+                      <textarea
+                        value={item.remarks || ""}
+                        onChange={(e) => { const n = [...toolboxTalks]; n[index].remarks = e.target.value; setToolboxTalks(n); }}
+                        placeholder="Optional remarks…"
+                        rows={2}
+                        className="mt-2 w-full rounded-md border border-blue-900/20 bg-[#241b15] px-3 py-2 text-sm text-[#F5EFE6] focus:border-blue-700/40 focus:outline-none"
+                      />
+                    )}
                   </div>
                 ))}
               </div>
+
             </div>
           </section>
 
@@ -1163,17 +840,67 @@ export default function NewDiaryPage() {
           <section>
             <h2 className={sectionHeading}>Photos</h2>
             <div className="space-y-4">
-              <button className="rounded-full bg-[#2563eb] px-4 py-2 text-sm font-medium text-white transition hover:bg-[#1d4ed8]">
-                Upload Photos
-              </button>
-              <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
-                {photos.map((photo) => (
-                  <div key={photo.id} className="rounded-lg border border-blue-900/20 bg-[#241b15] p-4">
-                    <img src={photo.url} alt={photo.caption || "Photo"} className="h-24 w-full rounded object-cover" />
-                    <p className="mt-2 text-sm text-[rgb(245,239,230/.6)]">{photo.caption}</p>
-                  </div>
-                ))}
+
+              {/* Hidden file inputs */}
+              <input
+                ref={cameraInputRef}
+                type="file"
+                accept="image/*"
+                capture="environment"
+                className="hidden"
+                onChange={(e) => { const f = e.target.files?.[0]; if (f) handlePhotoFile(f); e.target.value = ""; }}
+              />
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/*"
+                className="hidden"
+                onChange={(e) => { const f = e.target.files?.[0]; if (f) handlePhotoFile(f); e.target.value = ""; }}
+              />
+
+              <div className="flex flex-wrap gap-3">
+                <button
+                  type="button"
+                  onClick={() => cameraInputRef.current?.click()}
+                  className="rounded-full bg-[#2563eb] px-4 py-2 text-sm font-medium text-white transition hover:bg-[#1d4ed8]"
+                >
+                  📷 Take Photo
+                </button>
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  className="rounded-full border border-blue-900/30 px-4 py-2 text-sm font-medium text-[#F5EFE6] transition hover:border-blue-700/50 hover:bg-[#241b15]"
+                >
+                  Choose File
+                </button>
               </div>
+
+              {photos.length > 0 && (
+                <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
+                  {photos.map((photo) => (
+                    <div key={photo.id} className="relative rounded-lg border border-blue-900/20 bg-[#241b15] p-2">
+                      {photo.uploading ? (
+                        <div className="flex h-24 items-center justify-center rounded bg-[#1a1410]">
+                          <span className="text-xs text-[rgb(245,239,230/.5)]">Uploading…</span>
+                        </div>
+                      ) : (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img src={photo.url} alt={photo.caption || "Photo"} className="h-24 w-full rounded object-cover" />
+                      )}
+                      <div className="mt-1 flex items-center gap-1">
+                        <input
+                          type="text"
+                          placeholder="Caption"
+                          value={photo.caption || ""}
+                          onChange={(e) => setPhotos((prev) => prev.map((p) => p.id === photo.id ? { ...p, caption: e.target.value } : p))}
+                          className="flex-1 rounded border border-blue-900/20 bg-[#1a1410] px-2 py-1 text-xs text-[#F5EFE6] focus:outline-none"
+                        />
+                        <TrashBtn onClick={() => setPhotos((prev) => prev.filter((p) => p.id !== photo.id))} />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           </section>
 
@@ -1189,43 +916,84 @@ export default function NewDiaryPage() {
             />
           </section>
 
-          {/* ── Sign-off ────────────────────────────────────  */}
+          {/* ── Sign-off ─────────────────────────────────────  */}
           <section>
             <h2 className={sectionHeading}>Sign-off</h2>
             <div className="grid gap-4 sm:grid-cols-2">
               <div>
                 <label className="block text-sm font-medium text-[rgb(245,239,230/.6)]">Completed By</label>
-                <input
-                  type="text"
-                  value={signoffCompletedBy}
-                  onChange={(e) => setSignoffCompletedBy(e.target.value)}
-                  className={inputCls}
-                />
+                <input type="text" value={signoffCompletedBy} onChange={(e) => setSignoffCompletedBy(e.target.value)} className={inputCls} />
               </div>
               <div>
                 <label className="block text-sm font-medium text-[rgb(245,239,230/.6)]">Job Title</label>
-                <input
-                  type="text"
-                  value={signoffTitle}
-                  onChange={(e) => setSignoffTitle(e.target.value)}
-                  className={inputCls}
-                />
+                <input type="text" value={signoffTitle} onChange={(e) => setSignoffTitle(e.target.value)} className={inputCls} />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-[rgb(245,239,230/.6)]">Company</label>
+                <input type="text" value={signoffCompany} onChange={(e) => setSignoffCompany(e.target.value)} className={inputCls} />
               </div>
               <div>
                 <label className="block text-sm font-medium text-[rgb(245,239,230/.6)]">Date</label>
-                <input
-                  type="date"
-                  value={signoffDate}
-                  onChange={(e) => setSignoffDate(e.target.value)}
-                  className={inputCls}
-                />
+                <input type="date" value={signoffDate} readOnly className={`${inputCls} cursor-default`} />
               </div>
-              <div>
-                <label className="block text-sm font-medium text-[rgb(245,239,230/.6)]">Signature</label>
-                <button className="mt-1 w-full rounded-md bg-[#2563eb] px-3 py-2 text-sm font-medium text-white transition hover:bg-[#1d4ed8]">
+            </div>
+
+            {/* Signature */}
+            <div className="mt-6">
+              <label className="block text-sm font-medium text-[rgb(245,239,230/.6)]">Signature</label>
+              <div className="mt-2 flex gap-3">
+                <button
+                  type="button"
+                  onClick={() => setSigMode(sigMode === "draw" ? "none" : "draw")}
+                  className={`rounded-full px-4 py-2 text-sm font-medium transition ${sigMode === "draw" ? "bg-[#2563eb] text-white" : "border border-blue-900/30 text-[#F5EFE6] hover:border-blue-700/50 hover:bg-[#241b15]"}`}
+                >
+                  Draw Signature
+                </button>
+                <button
+                  type="button"
+                  onClick={() => sigUploadRef.current?.click()}
+                  className="rounded-full border border-blue-900/30 px-4 py-2 text-sm font-medium text-[#F5EFE6] transition hover:border-blue-700/50 hover:bg-[#241b15]"
+                >
                   Upload Signature
                 </button>
+                {signatureDataUrl && (
+                  <button
+                    type="button"
+                    onClick={() => { clearSig(); setSignatureDataUrl(""); setSigMode("none"); }}
+                    className="text-sm text-[rgb(245,239,230/.4)] hover:text-red-400"
+                  >
+                    Clear
+                  </button>
+                )}
               </div>
+
+              <input ref={sigUploadRef} type="file" accept="image/*" className="hidden" onChange={handleSigUpload} />
+
+              {sigMode === "draw" && (
+                <div className="mt-3">
+                  <canvas
+                    ref={canvasRef}
+                    width={800}
+                    height={160}
+                    className="w-full touch-none rounded-md border border-blue-900/20 bg-[#1a1410] cursor-crosshair"
+                    onMouseDown={startSigDraw}
+                    onMouseMove={drawSig}
+                    onMouseUp={stopSigDraw}
+                    onMouseLeave={stopSigDraw}
+                    onTouchStart={startSigDraw}
+                    onTouchMove={drawSig}
+                    onTouchEnd={stopSigDraw}
+                  />
+                  <p className="mt-1 text-xs text-[rgb(245,239,230/.4)]">Draw your signature above</p>
+                </div>
+              )}
+
+              {signatureDataUrl && sigMode !== "draw" && (
+                <div className="mt-3 rounded-md border border-blue-900/20 bg-[#1a1410] p-2">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={signatureDataUrl} alt="Signature" className="h-20 w-auto" />
+                </div>
+              )}
             </div>
           </section>
 
@@ -1237,15 +1005,8 @@ export default function NewDiaryPage() {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-4">
           <div className="w-full max-w-lg rounded-2xl border border-blue-900/20 bg-[#241b15] p-6 shadow-xl">
             <div className="mb-4 flex items-center justify-between">
-              <h3 className="text-lg font-semibold text-[#F5EFE6]">
-                Import Plant from Previous Diary
-              </h3>
-              <button
-                onClick={() => setShowImportModal(false)}
-                className="text-[rgb(245,239,230/.6)] hover:text-[#F5EFE6]"
-              >
-                ✕
-              </button>
+              <h3 className="text-lg font-semibold text-[#F5EFE6]">Import Plant from Previous Diary</h3>
+              <button onClick={() => setShowImportModal(false)} className="text-[rgb(245,239,230/.6)] hover:text-[#F5EFE6]">✕</button>
             </div>
             {loadingPreviousDiaries ? (
               <p className="text-[rgb(245,239,230/.6)]">Loading previous diaries...</p>
@@ -1261,22 +1022,18 @@ export default function NewDiaryPage() {
                   >
                     <span className="font-medium">{d.projectName || "Unnamed"}</span>
                     <span className="ml-3 text-sm text-[rgb(245,239,230/.6)]">{d.date}</span>
-                    <span className="ml-3 text-sm text-[rgb(245,239,230/.6)]">
-                      {d.plantOnSite.length} item{d.plantOnSite.length !== 1 ? "s" : ""}
-                    </span>
+                    <span className="ml-3 text-sm text-[rgb(245,239,230/.6)]">{d.plantOnSite.length} item{d.plantOnSite.length !== 1 ? "s" : ""}</span>
                   </button>
                 ))}
               </div>
             )}
-            <button
-              onClick={() => setShowImportModal(false)}
-              className="mt-4 rounded-full border border-blue-900/30 px-4 py-2 text-sm text-[#F5EFE6] transition hover:border-blue-700/50"
-            >
+            <button onClick={() => setShowImportModal(false)} className="mt-4 rounded-full border border-blue-900/30 px-4 py-2 text-sm text-[#F5EFE6] transition hover:border-blue-700/50">
               Cancel
             </button>
           </div>
         </div>
       )}
+
     </div>
   );
 }
