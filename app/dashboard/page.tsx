@@ -66,7 +66,7 @@ export default function DashboardPage() {
     >
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div>
-          <p className="text-sm uppercase tracking-[0.24em] text-[rgb(245,239,230/.6)]">{diary.dayOfWeek}</p>
+          <p className="text-sm uppercase tracking-[0.24em] text-[rgb(245,239,230/.6)]">{diary.shiftType || "Day Shift"}</p>
           <h2 className="text-xl font-semibold text-[#F5EFE6]">{diary.projectName}</h2>
           <p className="text-sm text-[rgb(245,239,230/.6)]">{diary.date}</p>
         </div>
@@ -83,7 +83,8 @@ export default function DashboardPage() {
 
       <div className="mt-5 space-y-2 text-sm text-[rgb(245,239,230/.6)]">
         <p>
-          <span className="font-semibold text-[#F5EFE6]">Weather:</span> {diary.weather?.condition || "Unknown"}
+          <span className="font-semibold text-[#F5EFE6]">Weather:</span>{" "}
+            {diary.weather?.notApplicable ? "N/A" : diary.weather?.condition || "Not recorded"}
         </p>
         <p>
           <span className="font-semibold text-[#F5EFE6]">Site manager:</span> {diary.siteManager}
