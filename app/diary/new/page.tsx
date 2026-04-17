@@ -6,7 +6,7 @@ import { collection, getDocs, getFirestore, query, where } from "firebase/firest
 import { getDownloadURL, getStorage, ref as storageRef, uploadBytes } from "firebase/storage";
 import app from "@/lib/firebaseClient";
 import { getOrgId } from "@/lib/auth";
-import { createDiary, saveDiary, listDiaries } from "@/lib/diaryService";
+import { createDiary, saveDiary, loadDiary, listDiaries } from "@/lib/diaryService";
 import type { PhotoEntry, SiteDiary } from "@/lib/types";
 import { generateDiaryPDF } from "@/lib/pdfGenerator";
 
@@ -85,6 +85,7 @@ export default function NewDiaryPage() {
   const [toast, setToast] = useState("");
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isInitialRender = useRef(true);
+  const isLoadingExistingDiary = useRef(false);
 
   const showToast = (msg: string) => {
     setToast(msg);
@@ -187,9 +188,53 @@ export default function NewDiaryPage() {
       .catch(() => {});
   }, [orgId]);
 
+  // ── Load existing diary in edit mode ──────────────────────
+  useEffect(() => {
+    if (!orgId || !userId) return;
+    const editId = new URLSearchParams(window.location.search).get('edit');
+    if (!editId) return;
+    isLoadingExistingDiary.current = true;
+    loadDiary(orgId, editId)
+      .then((data) => {
+        if (!data) return;
+        setDiaryId(data.id ?? null);
+        setProjectName(data.projectName ?? '');
+        setSiteAddress(data.siteAddress ?? '');
+        setDate(data.date ?? new Date().toISOString().split('T')[0]);
+        setShiftType(data.shiftType ?? 'Day Shift');
+        setSiteManager(data.siteManager ?? '');
+        setLinkedRamsId(data.linkedRamsId ?? '');
+        setLinkedRamsTitle(data.linkedRamsTitle ?? '');
+        setLinkedRamsRef(data.linkedRamsRef ?? '');
+        setRamsQuery(data.linkedRamsRef ? (data.linkedRamsTitle ? `${data.linkedRamsRef} — ${data.linkedRamsTitle}` : data.linkedRamsRef) : '');
+        setWeatherCondition(data.weather?.condition ?? '');
+        setWeatherRemarks(data.weather?.additionalRemarks ?? '');
+        setNewInductees(data.newInductees ?? 0);
+        setWorkers((data.workers ?? []).map((w) => ({ ...w, id: w.id || String(Math.random()) })));
+        setSubcontractors((data.subcontractors ?? []).map((s) => ({ ...s, id: s.id || String(Math.random()) })));
+        setVisitors((data.visitors ?? []).map((v) => ({ ...v, id: v.id || String(Math.random()) })));
+        setActivities((data.activities ?? []).map((a) => ({ ...a, id: a.id || String(Math.random()) })));
+        setMilestones((data.milestones ?? []).map((m, i) => ({ id: String(i), text: m })));
+        setPlantOnSite((data.plantOnSite ?? []).map((p) => ({ ...p, id: p.id || String(Math.random()) })));
+        setPlantOffHired((data.plantOffHired ?? []).map((p) => ({ ...p, id: p.id || String(Math.random()) })));
+        setPlantBreakdowns((data.plantBreakdowns ?? []).map((p) => ({ ...p, id: p.id || String(Math.random()) })));
+        setPlantDeliveries((data.plantDeliveries ?? []).map((p) => ({ ...p, id: p.id || String(Math.random()) })));
+        setIncidents((data.incidents ?? []).map((inc) => ({ ...inc, id: inc.id || String(Math.random()) })));
+        setToolboxTalks((data.toolboxTalks ?? []).map((t) => ({ ...t, id: t.id || String(Math.random()), showRemarks: Boolean(t.remarks) })));
+        setPhotos((data.photos ?? []).map((p) => ({ ...p })));
+        setNotes(data.notes ?? '');
+        setSignatureDataUrl(data.signoff?.signatureUrl ?? '');
+      })
+      .catch(() => {})
+      .finally(() => {
+        setTimeout(() => { isLoadingExistingDiary.current = false; }, 50);
+      });
+  }, [orgId, userId]);
+
   // ── Track unsaved changes ──────────────────────────────────
   useEffect(() => {
     if (isInitialRender.current) { isInitialRender.current = false; return; }
+    if (isLoadingExistingDiary.current) return;
     setHasUnsavedChanges(true);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectName, siteAddress, date, shiftType, siteManager, weatherCondition, weatherRemarks,
@@ -288,7 +333,7 @@ export default function NewDiaryPage() {
         const storage = getStorage(app);
         const ext = file.name.split(".").pop() || "jpg";
         const filename = `delivery-${Date.now()}.${ext}`;
-        const photoRef = storageRef(storage, `orgs/${orgId}/siteDiaries/photos/${filename}`);
+        const photoRef = storageRef(storage, `orgs/${orgId}/siteDiaries/${dId}/photos/${filename}`);
         await uploadBytes(photoRef, file);
         const downloadUrl = await getDownloadURL(photoRef);
         URL.revokeObjectURL(tempUrl);
@@ -429,6 +474,10 @@ export default function NewDiaryPage() {
       showToast('Cannot save — not authenticated. Please refresh and try again.');
       return;
     }
+    if (!projectName.trim()) {
+      showToast('Please enter a project name before saving.');
+      return;
+    }
     setSaving(true);
     try {
       const data = buildData("draft");
@@ -450,6 +499,10 @@ export default function NewDiaryPage() {
 
   const completeAndExport = async () => {
     if (!orgId || !userId) return;
+    if (!projectName.trim()) {
+      showToast('Please enter a project name before completing.');
+      return;
+    }
     setSaving(true);
     try {
       const data = buildData("completed");

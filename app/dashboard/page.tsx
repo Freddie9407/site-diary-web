@@ -99,12 +99,11 @@ export default function DashboardPage() {
       </div>
 
       <div className="mt-6 flex flex-wrap gap-3">
-        <button className="rounded-full border border-blue-900/20 bg-[#1f2937] px-4 py-2 text-sm text-[#F5EFE6] transition hover:border-blue-700/40">
-          View
-        </button>
-        <button className="rounded-full border border-blue-900/20 bg-[#1f2937] px-4 py-2 text-sm text-[#F5EFE6] transition hover:border-blue-700/40">
-          Edit
-        </button>
+        <Link href={`/diary/edit/${diary.id}`}>
+          <button className="rounded-full border border-blue-900/20 bg-[#1f2937] px-4 py-2 text-sm text-[#F5EFE6] transition hover:border-blue-700/40">
+            Edit
+          </button>
+        </Link>
         <button className="rounded-full border border-blue-900/20 bg-[#2563eb] px-4 py-2 text-sm text-[#F5EFE6] transition hover:bg-[#1d4ed8]">
           Export PDF
         </button>
