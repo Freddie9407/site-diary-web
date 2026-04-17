@@ -7,12 +7,6 @@ import { getDoc, getFirestore, doc } from "firebase/firestore";
 import app from "@/lib/firebaseClient";
 import { getOrgId } from "@/lib/auth";
 
-const ALLOWED_PLANS = new Set([
-  "sc-monthly",
-  "sc-pro",
-  "sc-platinum",
-  "diary-monthly",
-]);
 const SIGN_IN_URL = "https://fredconsol.co.uk/signin.html";
 
 export default function Home() {
@@ -46,11 +40,11 @@ export default function Home() {
         return;
       }
 
-      const planId = subscription.data()?.planId as string | undefined;
-      const diaryEntriesUsed = subscription.data()?.diaryEntriesUsed as number | undefined;
+      const sub = subscription.data() as Record<string, unknown>;
       const hasDiaryAccess =
-        ALLOWED_PLANS.has(planId ?? "") ||
-        (planId === "free-trial" && (diaryEntriesUsed ?? 0) < 1);
+        (sub.diaryAccess === true && sub.diaryStatus === 'active') ||
+        ['sc-monthly', 'sc-pro', 'sc-platinum'].includes(sub.planId as string) ||
+        (sub.planId === 'free-trial' && ((sub.diaryEntriesUsed as number) || 0) < 1);
 
       if (!hasDiaryAccess) {
         window.location.href = 'https://fredconsol.co.uk/billing.html';
