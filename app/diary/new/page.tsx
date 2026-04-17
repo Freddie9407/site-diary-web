@@ -82,7 +82,15 @@ export default function NewDiaryPage() {
   const [diaryId, setDiaryId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
+  const [toast, setToast] = useState("");
+  const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isInitialRender = useRef(true);
+
+  const showToast = (msg: string) => {
+    setToast(msg);
+    if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+    toastTimerRef.current = setTimeout(() => setToast(""), 3500);
+  };
 
   // Basic Info
   const [projectName, setProjectName] = useState("");
@@ -170,7 +178,7 @@ export default function NewDiaryPage() {
           snap.docs.map((d) => ({
             id: d.id,
             documentRef: (d.data().documentRef as string) || "",
-            projectName: (d.data().projectName as string) || "",
+            projectName: (d.data().projectName as string) || (d.data().title as string) || "",
             siteAddress: (d.data().siteAddress as string) || "",
             preparedBy: (d.data().preparedBy as string) || "",
           })),
@@ -416,7 +424,11 @@ export default function NewDiaryPage() {
   });
 
   const saveDraft = async () => {
-    if (!orgId || !userId) return;
+    console.log('[SiteDiary] Save called — orgId:', orgId, 'diaryId:', diaryId, 'userId:', userId);
+    if (!orgId || !userId) {
+      showToast('Cannot save — not authenticated. Please refresh and try again.');
+      return;
+    }
     setSaving(true);
     try {
       const data = buildData("draft");
@@ -427,9 +439,10 @@ export default function NewDiaryPage() {
         setDiaryId(newId);
       }
       setHasUnsavedChanges(false);
-      alert("Draft saved!");
-    } catch {
-      alert("Error saving draft");
+      showToast('Draft saved successfully');
+    } catch (err) {
+      console.error('[SiteDiary] Save failed:', err);
+      showToast('Error saving draft — check console for details');
     } finally {
       setSaving(false);
     }
@@ -1173,6 +1186,13 @@ export default function NewDiaryPage() {
 
         </div>
       </main>
+
+      {/* ── Toast notification ───────────────────────────── */}
+      {toast && (
+        <div className="fixed bottom-24 right-6 z-50 max-w-xs rounded-xl border border-blue-900/30 bg-[#241b15] px-4 py-3 text-sm text-[#F5EFE6] shadow-lg">
+          {toast}
+        </div>
+      )}
 
       {/* ── Floating action buttons ───────────────────────── */}
       <div className="fixed bottom-6 right-6 z-50 flex flex-col gap-2">
