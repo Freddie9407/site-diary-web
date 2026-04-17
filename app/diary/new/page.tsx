@@ -81,6 +81,8 @@ export default function NewDiaryPage() {
   const [userId, setUserId] = useState<string | null>(null);
   const [diaryId, setDiaryId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
+  const isInitialRender = useRef(true);
 
   // Basic Info
   const [projectName, setProjectName] = useState("");
@@ -176,6 +178,24 @@ export default function NewDiaryPage() {
       })
       .catch(() => {});
   }, [orgId]);
+
+  // ── Track unsaved changes ──────────────────────────────────
+  useEffect(() => {
+    if (isInitialRender.current) { isInitialRender.current = false; return; }
+    setHasUnsavedChanges(true);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectName, siteAddress, date, shiftType, siteManager, weatherCondition, weatherRemarks,
+      linkedRamsId, newInductees, workers, subcontractors, visitors, activities, milestones,
+      plantOnSite, plantOffHired, plantBreakdowns, plantDeliveries, incidents, toolboxTalks,
+      photos, notes, signatureDataUrl]);
+
+  useEffect(() => {
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (hasUnsavedChanges) { e.preventDefault(); e.returnValue = ''; }
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [hasUnsavedChanges]);
 
   // ── Minimal draft payload for auto-create on upload ───────
   const minimalDraft = useCallback(
@@ -406,6 +426,7 @@ export default function NewDiaryPage() {
         const newId = await createDiary(orgId, userId, data);
         setDiaryId(newId);
       }
+      setHasUnsavedChanges(false);
       alert("Draft saved!");
     } catch {
       alert("Error saving draft");
@@ -426,6 +447,7 @@ export default function NewDiaryPage() {
         dId = await createDiary(orgId, userId, data);
         setDiaryId(dId);
       }
+      setHasUnsavedChanges(false);
       generateDiaryPDF(data);
     } catch {
       alert("Error completing diary");
@@ -1151,6 +1173,27 @@ export default function NewDiaryPage() {
 
         </div>
       </main>
+
+      {/* ── Floating action buttons ───────────────────────── */}
+      <div className="fixed bottom-6 right-6 z-50 flex flex-col gap-2">
+        <button
+          onClick={() => {
+            const subject = encodeURIComponent('Bug Report — FredConSol Site Diary');
+            const body = encodeURIComponent(`Please describe the bug:\n\nURL: ${window.location.href}\n\n`);
+            window.open(`mailto:contactfredconsol@gmail.com?subject=${subject}&body=${body}`);
+          }}
+          className="rounded-xl border border-blue-900/30 bg-[#241b15] px-3 py-2 text-xs font-semibold text-[#F5EFE6]/70 shadow-lg transition-colors hover:bg-blue-900/20 hover:text-[#F5EFE6]"
+        >
+          🐛 Report a Bug
+        </button>
+        <button
+          onClick={saveDraft}
+          disabled={saving}
+          className="rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white shadow-lg transition-colors hover:bg-blue-700 disabled:opacity-50"
+        >
+          {saving ? 'Saving...' : '💾 Save'}
+        </button>
+      </div>
 
       {/* ── Import from Previous Diary Modal ──────────────── */}
       {showImportModal && (

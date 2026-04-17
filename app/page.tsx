@@ -53,8 +53,7 @@ export default function Home() {
         (planId === "free-trial" && (diaryEntriesUsed ?? 0) < 1);
 
       if (!hasDiaryAccess) {
-        setStatus("upgrade");
-        setMessage("Diary access requires a qualifying plan or a free trial with available entries.");
+        window.location.href = 'https://fredconsol.co.uk/billing.html';
         return;
       }
 

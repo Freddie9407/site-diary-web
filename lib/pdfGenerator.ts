@@ -261,6 +261,12 @@ export function generateDiaryPDF(diary: Partial<SiteDiary>): void {
     doc.text(`Page ${i} of ${total}`, pageW - margin, fY, { align: 'right' });
   }
 
-  const safeName = (diary.projectName || 'diary').replace(/[^a-z0-9]/gi, '-').toLowerCase();
-  doc.save(`site-diary-${safeName}-${diary.date || 'export'}.pdf`);
+  const parsedDate = new Date(diary.date || '');
+  const dd = String(parsedDate.getDate()).padStart(2, '0');
+  const mm = String(parsedDate.getMonth() + 1).padStart(2, '0');
+  const yy = String(parsedDate.getFullYear()).slice(-2);
+  const dateStr = isNaN(parsedDate.getTime()) ? (diary.date || 'export') : `${dd}${mm}${yy}`;
+  const ramsRef = diary.linkedRamsRef ? `_${diary.linkedRamsRef}` : '';
+  const projectName = (diary.projectName || 'SiteDiary').replace(/[^a-zA-Z0-9]/g, '_');
+  doc.save(`${projectName}_${dateStr}${ramsRef}.pdf`);
 }
