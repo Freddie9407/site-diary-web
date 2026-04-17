@@ -36,8 +36,7 @@ export interface PlantItem {
   id: string;
   item: string;
   supplier?: string;
-  checkStatus: 'not-checked' | 'serviceable' | 'issue';
-  notes?: string;
+  issue?: string;
 }
 
 export interface PlantDelivery {
