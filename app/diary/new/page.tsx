@@ -549,7 +549,7 @@ export default function NewDiaryPage() {
                         {allRamsDocs
                           .filter((d) => {
                             const q = ramsQuery.toLowerCase();
-                            return !q || d.documentRef.toLowerCase().includes(q) || d.projectName.toLowerCase().includes(q);
+                            return !q || d.documentRef.toLowerCase().includes(q) || d.projectName.toLowerCase().includes(q) || (d.siteAddress || "").toLowerCase().includes(q);
                           })
                           .map((d) => (
                             <li key={d.id}>
@@ -567,14 +567,15 @@ export default function NewDiaryPage() {
                                 }}
                                 className="w-full px-4 py-2 text-left text-sm text-[#F5EFE6] hover:bg-[#241b15]"
                               >
-                                <span className="font-medium">{d.documentRef}</span>
-                                {d.projectName && <span className="ml-2 text-[rgb(245,239,230/.6)]">— {d.projectName}</span>}
+                                <span className="font-medium">{d.projectName || "Untitled"}</span>
+                                {d.siteAddress && <span className="ml-2 text-[rgb(245,239,230/.6)]">— {d.siteAddress}</span>}
+                                {d.documentRef && <span className="ml-2 text-xs text-[rgb(245,239,230/.4)]">({d.documentRef})</span>}
                               </button>
                             </li>
                           ))}
                         {allRamsDocs.filter((d) => {
                           const q = ramsQuery.toLowerCase();
-                          return !q || d.documentRef.toLowerCase().includes(q) || d.projectName.toLowerCase().includes(q);
+                          return !q || d.documentRef.toLowerCase().includes(q) || d.projectName.toLowerCase().includes(q) || (d.siteAddress || "").toLowerCase().includes(q);
                         }).length === 0 && ramsQuery && (
                           <li className="px-4 py-2 text-sm text-[rgb(245,239,230/.4)]">No documents found</li>
                         )}
