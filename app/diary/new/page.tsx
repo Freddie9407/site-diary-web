@@ -62,7 +62,8 @@ type PlantDeliveryRow = { id: string; item: string; date: string; notes?: string
 type IncidentRow = { id: string; type: "incident" | "near-miss" | "accident"; description: string; injured?: string; actionTaken?: string };
 type ToolboxRow = { id: string; topic: string; remarks?: string; showRemarks?: boolean };
 type PhotoRow = PhotoEntry & { uploading?: boolean };
-type RamsDoc = { id: string; documentRef: string; projectName: string; siteAddress?: string; preparedBy?: string };
+type Job = { id: string; jobNumber?: string; projectName: string; siteAddress?: string };
+type RamsDoc = { id: string; documentRef: string; projectName: string; siteAddress?: string; preparedBy?: string; jobId?: string; jobNumber?: string };
 type PreviousDiary = { id: string; date: string; projectName: string; plantOnSite: PlantOnSiteRow[] };
 
 function getCanvasPos(canvas: HTMLCanvasElement, e: React.MouseEvent | React.TouchEvent) {
@@ -99,6 +100,14 @@ export default function NewDiaryPage() {
   const [date, setDate] = useState(new Date().toISOString().split("T")[0]);
   const [shiftType, setShiftType] = useState("Day Shift");
   const [siteManager, setSiteManager] = useState("");
+
+  // Linked job / project
+  const [allJobs, setAllJobs] = useState<Job[]>([]);
+  const [jobQuery, setJobQuery] = useState("");
+  const [jobOpen, setJobOpen] = useState(false);
+  const [selectedJobId, setSelectedJobId] = useState("");
+  const [jobNumber, setJobNumber] = useState("");
+  const jobInputRef = useRef<HTMLInputElement>(null);
 
   // Linked RAMS
   const [allRamsDocs, setAllRamsDocs] = useState<RamsDoc[]>([]);
@@ -182,6 +191,26 @@ export default function NewDiaryPage() {
             projectName: (d.data().projectName as string) || (d.data().title as string) || "",
             siteAddress: (d.data().siteAddress as string) || "",
             preparedBy: (d.data().preparedBy as string) || "",
+            jobId: (d.data().jobId as string) || undefined,
+            jobNumber: (d.data().jobNumber as string) || undefined,
+          })),
+        );
+      })
+      .catch(() => {});
+  }, [orgId]);
+
+  // ── Fetch jobs for project linking ─────────────────────────
+  useEffect(() => {
+    if (!orgId) return;
+    const db = getFirestore(app);
+    getDocs(collection(db, "orgs", orgId, "jobs"))
+      .then((snap) => {
+        setAllJobs(
+          snap.docs.map((d) => ({
+            id: d.id,
+            jobNumber: (d.data().jobNumber as string) || "",
+            projectName: (d.data().projectName as string) || "",
+            siteAddress: (d.data().siteAddress as string) || "",
           })),
         );
       })
@@ -207,6 +236,8 @@ export default function NewDiaryPage() {
         setLinkedRamsTitle(data.linkedRamsTitle ?? '');
         setLinkedRamsRef(data.linkedRamsRef ?? '');
         setRamsQuery(data.linkedRamsRef ? (data.linkedRamsTitle ? `${data.linkedRamsRef} — ${data.linkedRamsTitle}` : data.linkedRamsRef) : '');
+        setSelectedJobId(data.jobId ?? '');
+        setJobNumber(data.jobNumber ?? '');
         setWeatherCondition(data.weather?.condition ?? '');
         setWeatherRemarks(data.weather?.additionalRemarks ?? '');
         setNewInductees(data.newInductees ?? 0);
@@ -238,7 +269,7 @@ export default function NewDiaryPage() {
     setHasUnsavedChanges(true);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectName, siteAddress, date, shiftType, siteManager, weatherCondition, weatherRemarks,
-      linkedRamsId, newInductees, workers, subcontractors, visitors, activities, milestones,
+      selectedJobId, jobNumber, linkedRamsId, newInductees, workers, subcontractors, visitors, activities, milestones,
       plantOnSite, plantOffHired, plantBreakdowns, plantDeliveries, incidents, toolboxTalks,
       photos, notes, signatureDataUrl]);
 
@@ -259,6 +290,8 @@ export default function NewDiaryPage() {
       date,
       shiftType,
       siteManager,
+      jobId: selectedJobId || undefined,
+      jobNumber: jobNumber || undefined,
       weather: { condition: weatherCondition, notApplicable: weatherCondition === "Not Applicable" },
       workers: [],
       subcontractors: [],
@@ -275,7 +308,7 @@ export default function NewDiaryPage() {
       notes: "",
       signoff: { completedBy: "", title: "", date: new Date().toISOString().split("T")[0] },
     }),
-    [projectName, siteAddress, date, shiftType, siteManager, weatherCondition],
+    [projectName, siteAddress, date, shiftType, siteManager, weatherCondition, selectedJobId, jobNumber],
   );
 
   // ── General photo upload ───────────────────────────────────
@@ -443,6 +476,8 @@ export default function NewDiaryPage() {
       additionalRemarks: weatherRemarks,
     },
     siteManager,
+    jobId: selectedJobId || undefined,
+    jobNumber: jobNumber || undefined,
     linkedRamsId: linkedRamsId || undefined,
     linkedRamsTitle: linkedRamsTitle || undefined,
     linkedRamsRef: linkedRamsRef || undefined,
@@ -559,6 +594,91 @@ export default function NewDiaryPage() {
             <h2 className={sectionHeading}>Basic Info</h2>
             <div className="grid gap-6 sm:grid-cols-2">
 
+              {/* Link to Project */}
+              <div className="sm:col-span-2">
+                <label className={labelCls}>Link to Project</label>
+                {selectedJobId ? (
+                  <div className="mt-1 flex flex-wrap items-center gap-3">
+                    <span className="inline-flex items-center rounded-full bg-blue-900/40 px-3 py-1 text-sm font-medium text-blue-200">
+                      Job #{jobNumber || selectedJobId}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => { setSelectedJobId(""); setJobNumber(""); setJobQuery(""); }}
+                      className="text-sm text-[rgb(245,239,230/.4)] hover:text-[#F5EFE6]"
+                    >
+                      ✕ Remove
+                    </button>
+                  </div>
+                ) : (
+                  <div className="relative mt-1">
+                    <input
+                      ref={jobInputRef}
+                      type="text"
+                      value={jobQuery}
+                      onChange={(e) => { setJobQuery(e.target.value); setJobOpen(true); }}
+                      onFocus={() => setJobOpen(true)}
+                      onBlur={() => setTimeout(() => setJobOpen(false), 150)}
+                      placeholder="Search projects…"
+                      className={inputCls}
+                    />
+                    {jobOpen && (
+                      <ul className="absolute z-20 mt-1 max-h-52 w-full overflow-y-auto rounded-md border border-blue-900/30 bg-[#1a1410] shadow-lg">
+                        <li>
+                          <button
+                            type="button"
+                            onMouseDown={() => { setSelectedJobId(""); setJobNumber(""); setJobQuery(""); setJobOpen(false); }}
+                            className="w-full px-4 py-2 text-left text-sm text-[rgb(245,239,230/.5)] hover:bg-[#241b15]"
+                          >
+                            None
+                          </button>
+                        </li>
+                        {allJobs
+                          .filter((job) => {
+                            const q = jobQuery.toLowerCase();
+                            return !q || job.jobNumber?.toLowerCase().includes(q) || job.projectName.toLowerCase().includes(q) || (job.siteAddress || "").toLowerCase().includes(q);
+                          })
+                          .map((job) => (
+                            <li key={job.id}>
+                              <button
+                                type="button"
+                                onMouseDown={() => {
+                                  setSelectedJobId(job.id);
+                                  setJobNumber(job.jobNumber || "");
+                                  if (job.projectName) setProjectName(job.projectName);
+                                  if (job.siteAddress) setSiteAddress(job.siteAddress);
+                                  if (linkedRamsId) {
+                                    const selectedRams = allRamsDocs.find((d) => d.id === linkedRamsId);
+                                    if (selectedRams?.jobId && selectedRams.jobId !== job.id) {
+                                      setLinkedRamsId("");
+                                      setLinkedRamsTitle("");
+                                      setLinkedRamsRef("");
+                                      setRamsQuery("");
+                                    }
+                                  }
+                                  setJobQuery("");
+                                  setJobOpen(false);
+                                }}
+                                className="w-full px-4 py-2 text-left text-sm text-[#F5EFE6] hover:bg-[#241b15]"
+                              >
+                                <span className="font-medium">{job.projectName || "Untitled"}</span>
+                                {job.jobNumber && <span className="ml-2 text-[rgb(245,239,230/.6)]">#{job.jobNumber}</span>}
+                                {job.siteAddress && <span className="block text-xs text-[rgb(245,239,230/.4)]">{job.siteAddress}</span>}
+                              </button>
+                            </li>
+                          ))}
+                        {allJobs.filter((job) => {
+                          const q = jobQuery.toLowerCase();
+                          return !q || job.jobNumber?.toLowerCase().includes(q) || job.projectName.toLowerCase().includes(q) || (job.siteAddress || "").toLowerCase().includes(q);
+                        }).length === 0 && jobQuery && (
+                          <li className="px-4 py-2 text-sm text-[rgb(245,239,230/.4)]">No projects found</li>
+                        )}
+                      </ul>
+                    )}
+                  </div>
+                )}
+              </div>
+
               {/* Linked RAMS Document — top of form */}
               <div className="sm:col-span-2">
                 <label className={labelCls}>Linked RAMS Document</label>
@@ -602,7 +722,7 @@ export default function NewDiaryPage() {
                         {allRamsDocs
                           .filter((d) => {
                             const q = ramsQuery.toLowerCase();
-                            return !q || d.documentRef.toLowerCase().includes(q) || d.projectName.toLowerCase().includes(q) || (d.siteAddress || "").toLowerCase().includes(q);
+                            return (!selectedJobId || d.jobId === selectedJobId) && (!q || d.documentRef.toLowerCase().includes(q) || d.projectName.toLowerCase().includes(q) || (d.siteAddress || "").toLowerCase().includes(q));
                           })
                           .map((d) => (
                             <li key={d.id}>
@@ -615,6 +735,10 @@ export default function NewDiaryPage() {
                                   if (d.projectName) setProjectName(d.projectName);
                                   if (d.siteAddress) setSiteAddress(d.siteAddress);
                                   if (d.preparedBy) setSiteManager(d.preparedBy);
+                                  if (d.jobId) {
+                                    setSelectedJobId(d.jobId);
+                                    setJobNumber(d.jobNumber || allJobs.find((job) => job.id === d.jobId)?.jobNumber || "");
+                                  }
                                   setRamsQuery("");
                                   setRamsOpen(false);
                                 }}
@@ -628,7 +752,7 @@ export default function NewDiaryPage() {
                           ))}
                         {allRamsDocs.filter((d) => {
                           const q = ramsQuery.toLowerCase();
-                          return !q || d.documentRef.toLowerCase().includes(q) || d.projectName.toLowerCase().includes(q) || (d.siteAddress || "").toLowerCase().includes(q);
+                          return (!selectedJobId || d.jobId === selectedJobId) && (!q || d.documentRef.toLowerCase().includes(q) || d.projectName.toLowerCase().includes(q) || (d.siteAddress || "").toLowerCase().includes(q));
                         }).length === 0 && ramsQuery && (
                           <li className="px-4 py-2 text-sm text-[rgb(245,239,230/.4)]">No documents found</li>
                         )}

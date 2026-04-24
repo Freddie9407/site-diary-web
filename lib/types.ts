@@ -98,6 +98,8 @@ export interface SiteDiary {
   shiftType: string;
   weather: WeatherInfo;
   siteManager: string;
+  jobId?: string;
+  jobNumber?: string;
   linkedRamsId?: string;
   linkedRamsTitle?: string;
   linkedRamsRef?: string;
